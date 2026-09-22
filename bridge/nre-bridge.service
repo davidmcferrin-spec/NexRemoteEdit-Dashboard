@@ -2,6 +2,7 @@
 Description=NexEditorStats bridge (Jump + Telegraf + coturn)
 After=network.target postgresql.service
 Wants=network-online.target
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -11,7 +12,6 @@ WorkingDirectory=/opt/nre-web/bridge
 ExecStart=/opt/nre-web/venv/bin/python nre_bridge.py
 Restart=always
 RestartSec=5
-StartLimitIntervalSec=0
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=nre-bridge

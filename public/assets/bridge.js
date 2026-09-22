@@ -12,7 +12,9 @@ async function refreshLog() {
   const n = document.getElementById('logLines').value;
   const d = await (await fetch('log.php?action=log&lines=' + n)).json();
   const view = document.getElementById('logView');
-  view.textContent = (d.lines || []).join('\n');
+  view.textContent = (d.lines && d.lines.length)
+    ? d.lines.join('\n')
+    : (d.ok === false ? 'Could not read journal (sudo -n / sudoers).' : '');
   view.scrollTop = view.scrollHeight;
 }
 

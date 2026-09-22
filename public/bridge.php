@@ -31,7 +31,7 @@ $nre_active = 'bridge';
     </div>
     <?php endif; ?>
   </div>
-  <p class="hint">systemd unit <code>nre-bridge</code>. www-data needs the sudoers snippet in the README.</p>
+  <p class="hint">systemd unit <code>nre-bridge</code>. <code>setup.sh</code> installs <code>/etc/sudoers.d/nre-bridge</code> so Apache (<code>www-data</code>) can run <code>journalctl</code> / <code>systemctl</code> with <code>sudo -n</code>.</p>
   <div class="log-panel">
     <div class="log-toolbar">
       <label>Lines

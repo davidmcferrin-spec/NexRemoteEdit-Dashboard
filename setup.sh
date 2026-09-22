@@ -507,6 +507,16 @@ cmd_check() {
   fi
   if [[ -f /etc/sudoers.d/nre-bridge ]]; then
     ok "sudoers.d/nre-bridge installed"
+    if sudo -u www-data /usr/bin/sudo -n /usr/bin/systemctl is-active nre-bridge >/dev/null 2>&1; then
+      ok "www-data sudo -n systemctl is-active nre-bridge"
+    else
+      soft_fail "www-data cannot sudo -n systemctl is-active (check sudoers, remove www-data ALL rule if it requires a password)"
+    fi
+    if sudo -u www-data /usr/bin/sudo -n /usr/bin/journalctl -u nre-bridge -n 50 --no-pager --output=short-iso >/dev/null 2>&1; then
+      ok "www-data sudo -n journalctl nre-bridge"
+    else
+      soft_fail "www-data cannot sudo -n journalctl (need exact args from deploy/sudoers-nre)"
+    fi
   else
     soft_fail "sudoers.d/nre-bridge missing"
   fi

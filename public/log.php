@@ -27,19 +27,26 @@ if ($action === 'log' || $action === 'status') {
     exit;
 }
 
+$allowedLines = [50, 100, 200, 500];
+if (!in_array($lines, $allowedLines, true)) {
+    $lines = 100;
+}
+
+$sudo = '/usr/bin/sudo -n';
+
 if ($action === 'log') {
-    $cmd = 'sudo /usr/bin/journalctl -u nre-bridge -n ' . $lines
+    $cmd = $sudo . ' /usr/bin/journalctl -u nre-bridge -n ' . $lines
          . ' --no-pager --output=short-iso 2>&1';
     $output = [];
     exec($cmd, $output, $rc);
-    echo json_encode(['ok' => true, 'lines' => $output]);
+    echo json_encode(['ok' => $rc === 0, 'lines' => $output]);
 } elseif ($action === 'status') {
     $output = [];
-    exec('sudo /usr/bin/systemctl is-active nre-bridge 2>&1', $output, $rc);
+    exec($sudo . ' /usr/bin/systemctl is-active nre-bridge 2>&1', $output, $rc);
     $state = trim($output[0] ?? 'unknown');
-    echo json_encode(['ok' => true, 'active' => $state === 'active', 'state' => $state]);
+    echo json_encode(['ok' => $rc === 0 || $state === 'inactive', 'active' => $state === 'active', 'state' => $state]);
 } else {
-    $cmd = 'sudo /usr/bin/systemctl ' . $action . ' nre-bridge 2>&1';
+    $cmd = $sudo . ' /usr/bin/systemctl ' . $action . ' nre-bridge 2>&1';
     $output = [];
     exec($cmd, $output, $rc);
     echo json_encode([

@@ -45,7 +45,7 @@ sudo ./setup.sh status
 
 The script is idempotent. It writes the Postgres password into `data/config.json` (Settings). No `.env`. Existing `data/config.json` and `data/auth.json` are never overwritten on update.
 
-Templates: `deploy/apache-nre.conf`, `deploy/sudoers-nre`. Env overrides: `NRE_PREFIX`, `NRE_SERVER_NAME`, `NRE_INGEST_PORT`, `NRE_WS_PORT`.
+Templates: `deploy/apache-nre.conf`, `deploy/sudoers-nre` (installed as `/etc/sudoers.d/nre-bridge` for the Bridge page). Env overrides: `NRE_PREFIX`, `NRE_SERVER_NAME`, `NRE_INGEST_PORT`, `NRE_WS_PORT`.
 
 First visit to login creates `data/auth.json` with **`admin` / `admin`** (must change password). Browsers need TCP **8765** for the live WebSocket (trusted subnets only — WS is unauthenticated, same as xpmon). Do not expose ingest to the internet.
 
