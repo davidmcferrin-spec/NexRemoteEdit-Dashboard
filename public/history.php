@@ -53,6 +53,7 @@ $nre_active = 'history';
         <div class="machine-timeline" id="machineTimeline">
           <canvas id="tlBase" aria-label="Machine timeline"></canvas>
           <canvas id="tlOverlay"></canvas>
+          <div id="procLegend" class="tl-legend proc-legend" hidden></div>
           <div id="tlTip" class="tl-tip" hidden></div>
         </div>
         <p class="hint" id="machineHint"></p>

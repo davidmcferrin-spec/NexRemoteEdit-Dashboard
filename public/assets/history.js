@@ -288,11 +288,25 @@ function renderLegend(d) {
   ];
   if ((d.points || []).some(p => p.gpu_mem_pct != null)) bits.push(sw('#a78bfa', 'GPU memory', true));
   if ((d.points || []).some(p => p.disk_hot)) bits.push(sw('#f97316', 'Disk ≥ 90%'));
-  (d.processes || []).forEach((p, i) => {
-    const label = p.name + (p.pinned ? ' · pinned' : '');
-    bits.push(sw(PROC_COLORS[i % PROC_COLORS.length], label));
-  });
   document.getElementById('tlLegend').innerHTML = bits.join('');
+}
+
+function fillProcLegend(d) {
+  const el = document.getElementById('procLegend');
+  if (!el) return 0;
+  const series = d.processes || [];
+  if (!series.length) {
+    el.hidden = true;
+    el.innerHTML = '';
+    return 0;
+  }
+  el.innerHTML = series.map((p, i) => {
+    const label = p.name + (p.pinned ? ' · pinned' : '');
+    const color = PROC_COLORS[i % PROC_COLORS.length];
+    return `<span><i class="tl-swatch" style="background:${color}"></i>${esc(label)}</span>`;
+  }).join('');
+  el.hidden = false;
+  return el.offsetHeight;
 }
 
 function gapMsOf(d) {
@@ -431,7 +445,7 @@ function fitCanvas(canvas, cssW, cssH) {
   return ctx;
 }
 
-function buildLayout(d, cssW, bounds) {
+function buildLayout(d, cssW, bounds, procLegendH) {
   const bucketMs = Math.max(1, Number(d.bucket_sec) || 60) * 1000;
   const fromMs = bounds.fromMs;
   const toMs = Math.max(bounds.toMs, fromMs + bucketMs);
@@ -444,6 +458,7 @@ function buildLayout(d, cssW, bounds) {
     { id: 'win', h: 10 + winRows * 20 },
     { id: 'jump', h: 10 + jumpRows * 20 },
     { id: 'focus', h: 28 },
+    { id: 'procKey', h: Math.max(0, procLegendH || 0) },
     { id: 'proc', h: 128 },
     { id: 'activity', h: 26 },
     { id: 'events', h: 32 },
@@ -457,6 +472,7 @@ function buildLayout(d, cssW, bounds) {
     lane.y = y;
     lane.x = padL;
     lane.w = Math.max(40, cssW - padL - padR);
+    if (lane.h <= 0) return;
     y += lane.h + (i === lanes.length - 1 ? 0 : gap);
   });
   return {
@@ -811,8 +827,12 @@ function paint() {
   if (page.painting) return;
   page.painting = true;
   const bounds = rangeBounds();
-  const layout = buildLayout(d, cssW, bounds);
+  const procLegendH = fillProcLegend(d);
+  const layout = buildLayout(d, cssW, bounds, procLegendH);
   page.layout = layout;
+  const procKey = laneById(layout, 'procKey');
+  const procLegend = document.getElementById('procLegend');
+  if (procLegend && procKey && procKey.h > 0) procLegend.style.top = procKey.y + 'px';
   const base = fitCanvas(document.getElementById('tlBase'), cssW, layout.h);
   const over = fitCanvas(document.getElementById('tlOverlay'), cssW, layout.h);
   drawBase(base, layout, d);
