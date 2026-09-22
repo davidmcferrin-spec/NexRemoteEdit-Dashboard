@@ -1,0 +1,20 @@
+# Secrets and runtime data — never commit
+data/config.json
+data/auth.json
+data/*.sqlite
+data/*.tmp
+!data/config.example.json
+!data/.gitkeep
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Editor
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/

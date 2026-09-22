@@ -1,0 +1,4 @@
+# No secrets under DocumentRoot; deny anything that leaks out.
+<FilesMatch "\.(json|sql|env)$">
+    Require all denied
+</FilesMatch>

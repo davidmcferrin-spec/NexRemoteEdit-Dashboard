@@ -1,0 +1,7 @@
+# NexEditorStats — Bridge page (www-data via PHP).
+# Installed as /etc/sudoers.d/nre-bridge. Validate with: visudo -cf
+www-data ALL=(ALL) NOPASSWD: /usr/bin/journalctl -u nre-bridge *
+www-data ALL=(ALL) NOPASSWD: /usr/bin/systemctl start nre-bridge
+www-data ALL=(ALL) NOPASSWD: /usr/bin/systemctl stop nre-bridge
+www-data ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart nre-bridge
+www-data ALL=(ALL) NOPASSWD: /usr/bin/systemctl is-active nre-bridge

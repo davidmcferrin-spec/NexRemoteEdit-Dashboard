@@ -1,0 +1,50 @@
+{
+  "postgres": {
+    "host": "127.0.0.1",
+    "port": 5432,
+    "database": "nre",
+    "user": "nre",
+    "password": ""
+  },
+  "jump": {
+    "base_url": "https://api.jumpdesktop.com",
+    "team_id": "",
+    "api_token": ""
+  },
+  "telegraf": {
+    "ingest_token": "",
+    "ingest_cidrs": [
+      "10.0.0.0/8",
+      "172.16.0.0/12",
+      "192.168.0.0/16",
+      "127.0.0.1/32"
+    ],
+    "idle_active_seconds": 120
+  },
+  "process_watchlist": [
+    { "label": "Premiere Pro", "match": "premiere", "enabled": true },
+    { "label": "After Effects", "match": "afterfx", "enabled": true },
+    { "label": "Media Encoder", "match": "media encoder", "enabled": true },
+    { "label": "Photoshop", "match": "photoshop", "enabled": true },
+    { "label": "DaVinci Resolve", "match": "resolve", "enabled": true }
+  ],
+  "turn_servers": [
+    {
+      "id": "turn-1",
+      "name": "TURN 1",
+      "metrics_url": "http://127.0.0.1:9641/metrics",
+      "enabled": true
+    }
+  ],
+  "bridge": {
+    "ws_host": "0.0.0.0",
+    "ws_port": 8765,
+    "ingest_host": "127.0.0.1",
+    "ingest_port": 8766,
+    "jump_poll_seconds": 45,
+    "turn_poll_seconds": 15,
+    "retention_days": 90,
+    "stale_session_hours": 18,
+    "correlation_window_seconds": 90
+  }
+}
