@@ -21,7 +21,7 @@ $nre_active = 'telegraf';
 
   <section class="admin-section">
     <h2>1. Ingest token</h2>
-    <p class="hint">An admin generates the Bearer token in Settings → Telegraf ingest. The same token is used on every bay. The token is shown only once at generate time.</p>
+    <p class="hint">An admin generates the Bearer token in Settings → Telegraf ingest. The same token is used on every bay and is filled into the config in step 3.</p>
     <p id="tokenStatus" class="hint"></p>
     <?php if (!empty($user['permissions']['settings'])): ?>
     <p><a class="btn btn-sm" href="settings.php">Open Settings</a></p>
@@ -41,7 +41,7 @@ $nre_active = 'telegraf';
 
   <section class="admin-section">
     <h2>3. telegraf.conf</h2>
-    <p class="hint">Replace <code>YOUR_INGEST_TOKEN</code> with the token from Settings. Save as <code>C:\Program Files\InfluxData\telegraf\telegraf.conf</code> (overwrite the sample that shipped in the ZIP). Then start or restart the service (step 6).</p>
+    <p class="hint">The Bearer token is filled in from Settings when one exists. Save as <code>C:\Program Files\InfluxData\telegraf\telegraf.conf</code> (overwrite the sample that shipped in the ZIP). The copied config uses <code>pid_finder = "native"</code> so <code>inputs.procstat</code> starts on Windows (the default <code>pgrep</code> finder is Unix-only and will exit the agent). Then start or restart the service (step 6).</p>
     <div class="copy-toolbar">
       <button type="button" class="btn btn-sm" data-copy="telConf">Copy config</button>
     </div>

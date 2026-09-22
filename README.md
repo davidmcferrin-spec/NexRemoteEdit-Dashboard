@@ -77,9 +77,12 @@ Copy `data/config.example.json` only as a reference. The live file is created by
     Authorization = "Bearer <token from Settings>"
 ```
 
-The in-app **Telegraf** page has a copy-paste Windows ZIP install (there is no MSI), `telegraf.conf`, ingest URL, and the idle helper. Typical inputs: `cpu`, `mem`, `disk`, `nvidia_smi`, `procstat`, uptime, Windows logon, plus last input:
+The in-app **Telegraf** page has a copy-paste Windows ZIP install (there is no MSI), `telegraf.conf`, ingest URL, and the idle helper. Typical inputs: `cpu`, `mem`, `disk`, `nvidia_smi`, `procstat` (Windows must set `pid_finder = "native"` — the default `pgrep` finder is Unix-only), uptime, Windows logon, plus last input:
 
 ```toml
+[agent]
+  skip_processors_after_aggregators = true
+
 [[inputs.cpu]]
   percpu = false
   totalcpu = true
@@ -88,6 +91,7 @@ The in-app **Telegraf** page has a copy-paste Windows ZIP install (there is no M
 [[inputs.system]]          # uptime
 [[inputs.nvidia_smi]]
 [[inputs.procstat]]
+  pid_finder = "native"   # required on Windows; default pgrep is Unix-only
   pattern = ".*"
   # optional: include Windows user on each process
   # pid_tag = true

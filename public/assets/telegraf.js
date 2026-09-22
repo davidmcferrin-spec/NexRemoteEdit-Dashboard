@@ -1,12 +1,18 @@
 'use strict';
 
-function telegrafConf(ingestUrl, idleSec) {
+function tomlString(value) {
+  return String(value ?? '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+function telegrafConf(ingestUrl, idleSec, token) {
+  const bearer = token ? tomlString(token) : 'YOUR_INGEST_TOKEN';
   return `# NexEditorStats bay agent — interval 30s
 [agent]
   interval = "30s"
   round_interval = true
   hostname = ""
   omit_hostname = false
+  skip_processors_after_aggregators = true
 
 [[outputs.http]]
   url = "${ingestUrl}"
@@ -15,7 +21,7 @@ function telegrafConf(ingestUrl, idleSec) {
   use_batch_format = true
   [outputs.http.headers]
     Content-Type = "application/json"
-    Authorization = "Bearer YOUR_INGEST_TOKEN"
+    Authorization = "Bearer ${bearer}"
 
 [[inputs.cpu]]
   percpu = false
@@ -27,7 +33,9 @@ function telegrafConf(ingestUrl, idleSec) {
 # Uncomment on NVIDIA edit bays
 # [[inputs.nvidia_smi]]
 
+# Windows has no pgrep — native finder is required (default is pgrep)
 [[inputs.procstat]]
+  pid_finder = "native"
   pattern = ".*"
 
 [[inputs.win_wmi]]
@@ -110,7 +118,7 @@ function fill(meta) {
   const url = meta.ingest_url || 'http://nre.yourdomain.local/api/telemetry/ingest';
   const scriptUrl = meta.idle_script_url || 'assets/nre-idle.ps1';
   const idle = meta.idle_active_seconds || 120;
-  document.getElementById('telConf').textContent = telegrafConf(url, idle);
+  document.getElementById('telConf').textContent = telegrafConf(url, idle, meta.ingest_token);
   const zipEl = document.getElementById('telZip');
   if (zipEl) zipEl.textContent = zipInstallScript();
   const startEl = document.getElementById('telStart');
@@ -123,7 +131,7 @@ function fill(meta) {
   const st = document.getElementById('tokenStatus');
   if (st) {
     st.textContent = meta.token_set
-      ? 'Ingest token is set. Paste it into the config as YOUR_INGEST_TOKEN.'
+      ? 'Ingest token is included in the telegraf.conf below. Copy step 3 as-is.'
       : 'No ingest token yet — an admin must generate one in Settings before bays can connect.';
   }
 }
