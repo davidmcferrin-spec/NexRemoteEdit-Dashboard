@@ -53,7 +53,7 @@ $nre_active = 'telegraf';
     <p class="hint">Windows only reports last input and the foreground process from the <strong>logged-on user’s session</strong>. Telegraf running as a service cannot see them. This helper writes idle time, the focused process name, and input counts (moves, clicks, keys — never keystroke content) every 15 seconds. Live marks the bay <strong>active</strong> when idle is under <span id="idleThreshold">120</span> seconds (Settings). The same helper is what History uses for on-prem editors that are not in Jump.</p>
     <ol class="install-steps">
       <li>Download <a id="idleScriptLink" href="assets/nre-idle.ps1" download>nre-idle.ps1</a> and save it to <code>C:\ProgramData\nre\nre-idle.ps1</code>.</li>
-      <li>In an elevated PowerShell <strong>on the bay, while logged on as the editor</strong>, register a logon task (it must run in that user’s session, not as the Telegraf service):</li>
+      <li>In an elevated PowerShell <strong>on the bay, while logged on as the editor</strong>, register the logon task below. It runs in that user’s session with no window. Run it again to replace an older task that left a PowerShell window open.</li>
     </ol>
     <div class="copy-toolbar">
       <button type="button" class="btn btn-sm" data-copy="idleTask">Copy task script</button>
