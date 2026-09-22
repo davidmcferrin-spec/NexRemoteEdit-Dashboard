@@ -140,12 +140,43 @@ function fill(meta) {
   }
 }
 
+function copyTextFallback(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.top = '0';
+  ta.style.left = '-9999px';
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  let ok = false;
+  try {
+    ok = document.execCommand('copy');
+  } finally {
+    ta.remove();
+  }
+  if (!ok) throw new Error('copy failed');
+}
+
+async function copyText(text) {
+  // Run during the click. clipboard.writeText is blocked on http:// LAN hosts.
+  try {
+    copyTextFallback(text);
+    return;
+  } catch (e) { /* try the async API while the click is still active */ }
+  if (navigator.clipboard && window.isSecureContext) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  throw new Error('copy failed');
+}
+
 document.querySelectorAll('[data-copy]').forEach(btn => {
   btn.addEventListener('click', async () => {
     const el = document.getElementById(btn.dataset.copy);
     if (!el) return;
     try {
-      await navigator.clipboard.writeText(el.textContent);
+      await copyText(el.textContent);
       toast('success', 'Copied');
     } catch (e) {
       toast('error', 'Copy failed');
