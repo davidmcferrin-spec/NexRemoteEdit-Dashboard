@@ -61,6 +61,37 @@ function telegrafConf(ingestUrl, idleSec) {
 `;
 }
 
+const TELEGRAF_WIN_VER = '1.40.1';
+
+function zipInstallScript() {
+  const ver = TELEGRAF_WIN_VER;
+  const zip = `telegraf-${ver}_windows_amd64.zip`;
+  return `# Elevated PowerShell. Official package is a ZIP — there is no MSI.
+$ver = '${ver}'
+$zip = "telegraf-${ver}_windows_amd64.zip"
+$dest = 'C:\\Program Files\\InfluxData\\telegraf'
+New-Item -ItemType Directory -Path $dest -Force | Out-Null
+Invoke-WebRequest "https://dl.influxdata.com/telegraf/releases/$zip" -UseBasicParsing -OutFile "$env:TEMP\\$zip"
+Expand-Archive "$env:TEMP\\$zip" -DestinationPath $dest -Force
+Get-ChildItem $dest -Recurse -Filter telegraf.exe | Select-Object -First 1 | ForEach-Object {
+  if ($_.DirectoryName -ne $dest) { Copy-Item $_.FullName (Join-Path $dest 'telegraf.exe') -Force }
+}
+Write-Host "telegraf.exe is in $dest — next: save telegraf.conf there (step 3), then step 6."
+`;
+}
+
+function startServiceScript() {
+  return `$dest = 'C:\\Program Files\\InfluxData\\telegraf'
+Set-Location $dest
+if (-not (Get-Service telegraf -ErrorAction SilentlyContinue)) {
+  .\\telegraf.exe --service install --config "$dest\\telegraf.conf"
+}
+.\\telegraf.exe --service start
+Get-Service telegraf
+Get-Content "$dest\\telegraf.conf" | Select-Object -First 8
+`;
+}
+
 function idleTaskScript(scriptUrl, idleSec) {
   return `$dir = 'C:\\ProgramData\\nre'
 New-Item -ItemType Directory -Path $dir -Force | Out-Null
@@ -80,6 +111,10 @@ function fill(meta) {
   const scriptUrl = meta.idle_script_url || 'assets/nre-idle.ps1';
   const idle = meta.idle_active_seconds || 120;
   document.getElementById('telConf').textContent = telegrafConf(url, idle);
+  const zipEl = document.getElementById('telZip');
+  if (zipEl) zipEl.textContent = zipInstallScript();
+  const startEl = document.getElementById('telStart');
+  if (startEl) startEl.textContent = startServiceScript();
   document.getElementById('idleTask').textContent = idleTaskScript(scriptUrl, idle);
   const link = document.getElementById('idleScriptLink');
   if (link) link.href = scriptUrl;

@@ -77,7 +77,7 @@ Copy `data/config.example.json` only as a reference. The live file is created by
     Authorization = "Bearer <token from Settings>"
 ```
 
-The in-app **Telegraf** page has a copy-paste `telegraf.conf`, ingest URL, and the idle helper. Typical inputs: `cpu`, `mem`, `disk`, `nvidia_smi`, `procstat`, uptime, Windows logon, plus last input:
+The in-app **Telegraf** page has a copy-paste Windows ZIP install (there is no MSI), `telegraf.conf`, ingest URL, and the idle helper. Typical inputs: `cpu`, `mem`, `disk`, `nvidia_smi`, `procstat`, uptime, Windows logon, plus last input:
 
 ```toml
 [[inputs.cpu]]
