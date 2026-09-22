@@ -1,7 +1,7 @@
 # NexEditorStats presence helper.
-# MUST run in the interactive Windows session (scheduled task:
-# "Run only when user is logged on"). Telegraf-as-service cannot see
-# the foreground window or last input from session 0.
+# MUST run in the interactive Windows session (logon task started by
+# wscript.exe with no window). Telegraf-as-service cannot see the
+# foreground window or last input from session 0.
 #
 # Writes Influx line protocol to C:\ProgramData\nre\idle.influx:
 #   idle_sec, active, foreground process name,

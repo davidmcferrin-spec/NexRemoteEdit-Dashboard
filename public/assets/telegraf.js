@@ -105,16 +105,26 @@ Get-Content "$dest\\telegraf.conf" | Select-Object -First 8
 }
 
 function idleTaskScript(scriptUrl, idleSec) {
+  const seconds = Number(idleSec) > 0 ? Number(idleSec) : 120;
   return `$dir = 'C:\\ProgramData\\nre'
+$idleSec = ${seconds}
 New-Item -ItemType Directory -Path $dir -Force | Out-Null
 icacls $dir /grant Users:M | Out-Null
 Invoke-WebRequest -Uri '${scriptUrl}' -OutFile "$dir\\nre-idle.ps1" -UseBasicParsing
 
-$action = New-ScheduledTaskAction -Execute 'powershell.exe' \`
-  -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File \`"$dir\\nre-idle.ps1\`" -Loop -IntervalSec 15 -ActiveSeconds ${idleSec}"
+# wscript has no console. The last argument is True so the task stays running
+# until the helper exits; False lets Task Scheduler stop PowerShell immediately.
+$vbs = @"
+CreateObject("Wscript.Shell").Run "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""$dir\\nre-idle.ps1"" -Loop -IntervalSec 15 -ActiveSeconds $idleSec", 0, True
+"@
+Set-Content -LiteralPath "$dir\\nre-idle.vbs" -Value $vbs -Encoding ASCII
+
+Stop-ScheduledTask -TaskName 'NexEditorStats-Idle' -ErrorAction SilentlyContinue
+$action = New-ScheduledTaskAction -Execute 'C:\\Windows\\System32\\wscript.exe' -Argument "//B //Nologo \`"$dir\\nre-idle.vbs\`""
 $trigger = New-ScheduledTaskTrigger -AtLogOn
-$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
-Register-ScheduledTask -TaskName 'NexEditorStats-Idle' -Action $action -Trigger $trigger -Settings $settings -RunLevel Limited -Force
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::Zero)
+$principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
+Register-ScheduledTask -TaskName 'NexEditorStats-Idle' -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force
 Start-ScheduledTask -TaskName 'NexEditorStats-Idle'`;
 }
 
