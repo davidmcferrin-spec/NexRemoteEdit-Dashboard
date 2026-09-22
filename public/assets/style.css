@@ -575,6 +575,42 @@ html, body {
   box-shadow: 0 20px 60px rgba(0,0,0,0.5);
 }
 .modal.modal-sm { max-width: 340px; }
+.modal.modal-procs { max-width: 760px; }
+.proc-sub {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 4px 0 0;
+}
+.proc-user { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+.proc-user-empty { font-weight: 500; color: var(--text-muted); }
+.proc-age { font-size: 12px; font-weight: 500; color: var(--text-secondary); }
+.proc-table-wrap { max-height: min(70vh, 560px); overflow: auto; }
+#procTable { width: 100%; border-collapse: collapse; }
+#procTable th,
+#procTable td {
+  text-align: left;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+#procTable th {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  position: sticky;
+  top: 0;
+  background: var(--bg-surface);
+}
+#procTable td.num,
+#procTable th.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  width: 90px;
+}
+#procTable tr.proc-pinned td:first-child { color: var(--accent); font-weight: 600; }
 
 .modal-header {
   display: flex;

@@ -41,6 +41,31 @@ $isKiosk = !empty($user['is_kiosk']);
   </div>
 </main>
 
+<div class="modal-overlay" id="procModal" hidden>
+  <div class="modal modal-procs" role="dialog" aria-modal="true" aria-labelledby="procTitle">
+    <div class="modal-header">
+      <div>
+        <h2 id="procTitle">Processes</h2>
+        <p class="proc-sub" id="procSub"></p>
+      </div>
+      <button type="button" class="modal-close" id="procClose" aria-label="Close">✕</button>
+    </div>
+    <div class="proc-table-wrap" id="procScroll">
+      <table class="admin-table" id="procTable">
+        <thead>
+          <tr>
+            <th>Process</th>
+            <th>User</th>
+            <th class="num">CPU</th>
+            <th class="num">Memory</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
 <?php if (!empty($user['must_change_password'])): ?>
 <div class="modal-overlay" id="modalPw">
   <div class="modal">

@@ -1,6 +1,6 @@
 'use strict';
 
-const state = { hosts: new Map(), unmatched: {}, filter: '', watchlist: [], expanded: new Set(), procsOpen: new Set() };
+const state = { hosts: new Map(), unmatched: {}, filter: '', watchlist: [], expanded: new Set(), procHost: null };
 let ws = null;
 let rafQueued = false;
 
@@ -139,7 +139,6 @@ function cardHtml(h) {
   else if (h.online || age != null) cls = machineHot(tel) ? 'degraded' : 'connected';
   const key = hostKey(h.hostname);
   const expanded = state.expanded.has(key);
-  const procsOpen = state.procsOpen.has(key);
   const disks = (tel.disk || []).map(d => {
     const freePct = d.used_pct != null ? 100 - Number(d.used_pct) : null;
     return `<div class="disk-row">
@@ -155,15 +154,6 @@ function cardHtml(h) {
   const chips = watched.map(p =>
     `<span class="watch-chip" title="${esc(p.name)}">${esc((p.watch || []).join(', ') || p.name)}</span>`
   ).join('');
-  const procRows = procs.map(p => {
-    const pin = p.watch && p.watch.length;
-    return `<li class="app-row ${pin ? 'app-watched' : ''}">
-      <span class="app-status-dot"></span>
-      <span class="app-name">${esc(p.name)}${pin ? ' <span class="badge badge-update">' + esc(p.watch.join(', ')) + '</span>' : ''}</span>
-      <span class="app-version">${esc(p.user || '')}</span>
-      <span class="app-state-label">${p.cpu != null ? Number(p.cpu).toFixed(1) + '%' : '—'}${p.rss ? ' · ' + fmtBytes(p.rss) : ''}</span>
-    </li>`;
-  }).join('');
   const jumpBlock = jump ? `<div class="canvas-section">
       <div class="canvas-section-title">Jump remote</div>
       <div class="card-meta">${esc(jump.user_email || '—')} · ${esc(jump.transport || '')} · ${fmtDur(jump.duration_sec)} · ${esc(jump.client_ip || '')}</div>
@@ -201,10 +191,9 @@ function cardHtml(h) {
       ${chips ? `<div class="watch-chips">${chips}</div>` : ''}
       ${jumpBlock}
       <div class="app-section">
-        <button type="button" class="app-section-toggle${procsOpen ? ' open' : ''}" data-toggle-procs="${esc(key)}">
+        <button type="button" class="app-section-toggle" data-open-procs="${esc(key)}">
           Processes (${procs.length})${watched.length ? ' · ' + watched.length + ' pinned' : ''}
         </button>
-        <ul class="app-list"${procsOpen ? '' : ' hidden'}>${procRows || '<li class="hint">No process list in last sample</li>'}</ul>
       </div>
     </div>
   </article>`;
@@ -250,6 +239,54 @@ function render() {
     const staleN = list.filter(h => (sampleAge(h) || 0) > STALE_SEC).length;
     banner.textContent = `${n} bay${n === 1 ? '' : 's'} · ${actn} active · ${rem} remoted via Jump${staleN ? ' · ' + staleN + ' stale' : ''}`;
   }
+  renderProcModal();
+}
+
+function closeProcModal() {
+  state.procHost = null;
+  const overlay = document.getElementById('procModal');
+  if (overlay) overlay.hidden = true;
+}
+
+function renderProcModal() {
+  const overlay = document.getElementById('procModal');
+  if (!overlay) return;
+  if (!state.procHost) {
+    overlay.hidden = true;
+    return;
+  }
+  const h = state.hosts.get(state.procHost);
+  if (!h) {
+    closeProcModal();
+    return;
+  }
+  overlay.hidden = false;
+  const title = document.getElementById('procTitle');
+  const sub = document.getElementById('procSub');
+  if (title) title.textContent = h.display_name || h.hostname || 'Processes';
+  const users = winUsers(h);
+  const age = sampleAge(h);
+  if (sub) {
+    sub.innerHTML = `<span class="proc-user${users.length ? '' : ' proc-user-empty'}">${esc(users.length ? users.join(', ') : 'No one logged on')}</span>`
+      + (age != null ? `<span class="proc-age">${esc(fmtAge(age))}</span>` : '');
+  }
+  const tel = h.telemetry || {};
+  const procs = tel.processes || [];
+  const scroll = document.getElementById('procScroll');
+  const top = scroll ? scroll.scrollTop : 0;
+  const tb = document.querySelector('#procTable tbody');
+  if (!tb) return;
+  tb.innerHTML = procs.map(p => {
+    const pin = p.watch && p.watch.length;
+    const cpu = p.cpu != null && p.cpu !== '' ? Number(p.cpu).toFixed(1) + '%' : '—';
+    return `<tr class="${pin ? 'proc-pinned' : ''}">
+      <td>${esc(p.name || '—')}${pin ? ' <span class="badge badge-update">' + esc(p.watch.join(', ')) + '</span>' : ''}</td>
+      <td>${esc(p.user || '—')}</td>
+      <td class="num">${esc(cpu)}</td>
+      <td class="num">${esc(p.rss ? fmtBytes(p.rss) : '—')}</td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="4">No process list in the last sample</td></tr>';
+  if (scroll) scroll.scrollTop = top;
 }
 
 function queueRender() {
@@ -346,17 +383,10 @@ document.getElementById('searchInput')?.addEventListener('input', (e) => {
 });
 
 document.getElementById('sessionGrid')?.addEventListener('click', (e) => {
-  const procBtn = e.target.closest('[data-toggle-procs]');
+  const procBtn = e.target.closest('[data-open-procs]');
   if (procBtn) {
-    const list = procBtn.parentElement?.querySelector('.app-list');
-    if (!list) return;
-    list.hidden = !list.hidden;
-    procBtn.classList.toggle('open', !list.hidden);
-    const key = procBtn.dataset.toggleProcs;
-    if (key) {
-      if (list.hidden) state.procsOpen.delete(key);
-      else state.procsOpen.add(key);
-    }
+    state.procHost = procBtn.dataset.openProcs || null;
+    renderProcModal();
     return;
   }
   if (e.target.closest('a')) return;
@@ -389,6 +419,14 @@ if (btnPw) {
     } else toast('error', d.error || 'Failed');
   });
 }
+
+document.getElementById('procClose')?.addEventListener('click', closeProcModal);
+document.getElementById('procModal')?.addEventListener('click', (e) => {
+  if (e.target.id === 'procModal') closeProcModal();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && state.procHost) closeProcModal();
+});
 
 connect();
 setInterval(queueRender, 15000);
