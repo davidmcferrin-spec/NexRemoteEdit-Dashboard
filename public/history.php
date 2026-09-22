@@ -15,12 +15,12 @@ $nre_active = 'history';
 </head>
 <body>
 <?php require __DIR__ . '/includes/nav.php'; ?>
-<main class="admin-page">
+<main class="admin-page history-page">
   <h1 class="page-title">History</h1>
-  <p class="hint">Last 90 days for every editor, including bays that are not in Jump. Work intervals come from the Windows user on the machine. Jump sessions are the remote overlay. Pick a host to chart CPU, memory, disk, GPU, idle, and input.</p>
+  <p class="hint">Last 90 days for every editor, including bays that are not in Jump. Pick a host for one timeline: CPU, memory, GPU, who was at the console, Jump, the focused app, process usage, keyboard and mouse, and Windows events.</p>
   <form id="histFilters" class="filter-bar">
     <label>Host
-      <select id="histHost"><option value="">All mapped hosts</option></select>
+      <select id="histHost"><option value="">All hosts</option></select>
     </label>
     <label>From
       <input type="datetime-local" id="histFrom">
@@ -28,8 +28,49 @@ $nre_active = 'history';
     <label>To
       <input type="datetime-local" id="histTo">
     </label>
+    <div class="range-presets" role="group" aria-label="Time range">
+      <button type="button" class="btn btn-sm btn-secondary" data-range="1h">1 hour</button>
+      <button type="button" class="btn btn-sm btn-secondary" data-range="8h">8 hours</button>
+      <button type="button" class="btn btn-sm btn-secondary" data-range="24h">24 hours</button>
+      <button type="button" class="btn btn-sm btn-secondary" data-range="7d">7 days</button>
+    </div>
     <button type="submit" class="btn btn-sm">Apply</button>
   </form>
+
+  <section class="admin-section" id="machineSection">
+    <div class="machine-head">
+      <h2 id="machineTitle">Machine timeline</h2>
+      <div id="procToggle" hidden>
+        <span class="proc-toggle-label">Top processes</span>
+        <button type="button" id="procCpu" class="btn btn-sm" aria-pressed="true">CPU</button>
+        <button type="button" id="procMem" class="btn btn-sm btn-secondary" aria-pressed="false">Memory</button>
+      </div>
+    </div>
+    <p class="hint" id="machineIntro">Select a host to put usage, the Windows session, Jump, the focused app, processes, keyboard and mouse, and Windows events on one timeline.</p>
+    <div id="machineLayout" class="machine-layout" hidden>
+      <div class="machine-main">
+        <div id="tlLegend" class="tl-legend"></div>
+        <div class="machine-timeline" id="machineTimeline">
+          <canvas id="tlBase" aria-label="Machine timeline"></canvas>
+          <canvas id="tlOverlay"></canvas>
+          <div id="tlTip" class="tl-tip" hidden></div>
+        </div>
+        <p class="hint" id="machineHint"></p>
+        <h3 class="machine-subhead">Windows events in this range</h3>
+        <div class="admin-table-wrap machine-events">
+          <table class="admin-table" id="machineEvents">
+            <thead>
+              <tr>
+                <th>Time</th><th>Kind</th><th>Severity</th><th>Event</th><th>User</th><th>Message</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+      <aside class="machine-rail" id="machineRail"></aside>
+    </div>
+  </section>
 
   <section class="admin-section">
     <h2>At the workstation</h2>
@@ -62,18 +103,6 @@ $nre_active = 'history';
     </div>
   </section>
 
-  <section class="admin-section">
-    <h2>Host performance</h2>
-    <div class="chart-grid">
-      <div class="chart-card"><h3>CPU %</h3><canvas id="chartCpu" width="640" height="180"></canvas></div>
-      <div class="chart-card"><h3>Memory %</h3><canvas id="chartMem" width="640" height="180"></canvas></div>
-      <div class="chart-card"><h3>Tightest disk free %</h3><canvas id="chartDisk" width="640" height="180"></canvas></div>
-      <div class="chart-card"><h3>GPU util %</h3><canvas id="chartGpu" width="640" height="180"></canvas></div>
-      <div class="chart-card"><h3>Idle seconds</h3><canvas id="chartIdle" width="640" height="180"></canvas></div>
-      <div class="chart-card"><h3>Active %</h3><canvas id="chartActive" width="640" height="180"></canvas></div>
-      <div class="chart-card"><h3>Input events</h3><canvas id="chartInput" width="640" height="180"></canvas></div>
-    </div>
-  </section>
 
   <section class="admin-section">
     <h2>Focused app</h2>
@@ -97,7 +126,7 @@ $nre_active = 'history';
     </div>
   </section>
 
-  <section class="admin-section">
+  <section class="admin-section" id="turnSection">
     <h2>TURN throughput</h2>
     <div class="chart-card"><h3>Relay bytes (cumulative counters)</h3><canvas id="chartTurn" width="960" height="200"></canvas></div>
   </section>

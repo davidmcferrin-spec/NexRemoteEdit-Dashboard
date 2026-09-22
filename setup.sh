@@ -358,11 +358,68 @@ install_apache() {
   fi
 }
 
+# Collect InaccessiblePaths from the apache2 unit, skipping our Option B drop-ins
+# so we keep the vendor/hardening list and only carve out sudoers.
+nre_collect_apache_inaccessible_paths() {
+  local f line val token drop
+  NRE_INACC_PATHS=()
+  for f in \
+    /lib/systemd/system/apache2.service \
+    /usr/lib/systemd/system/apache2.service \
+    /etc/systemd/system/apache2.service
+  do
+    [[ -f "${f}" ]] || continue
+    nre_parse_inaccessible_paths_file "${f}"
+  done
+  if [[ -d /etc/systemd/system/apache2.service.d ]]; then
+    while IFS= read -r drop; do
+      [[ -n "${drop}" ]] || continue
+      case "$(basename "${drop}")" in
+        nre-sudo.conf|zz-allow-sudoers.conf) continue ;;
+      esac
+      nre_parse_inaccessible_paths_file "${drop}"
+    done < <(find /etc/systemd/system/apache2.service.d -maxdepth 1 -type f -name '*.conf' | sort)
+  fi
+}
+
+nre_parse_inaccessible_paths_file() {
+  local line val token
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    line="${line%%#*}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ "${line}" == InaccessiblePaths=* ]] || continue
+    val="${line#InaccessiblePaths=}"
+    val="${val#"${val%%[![:space:]]*}"}"
+    val="${val%"${val##*[![:space:]]}"}"
+    if [[ -z "${val}" ]]; then
+      NRE_INACC_PATHS=()
+      continue
+    fi
+    for token in ${val}; do
+      NRE_INACC_PATHS+=("${token}")
+    done
+  done < "$1"
+}
+
+nre_filter_sudoers_inaccessible_paths() {
+  local token path
+  local -a kept=()
+  for token in "${NRE_INACC_PATHS[@]}"; do
+    path="${token#-}"
+    case "${path}" in
+      /etc/sudoers|/etc/sudoers.d|/etc/sudoers.d/*) continue ;;
+    esac
+    kept+=("${token}")
+  done
+  NRE_INACC_PATHS=("${kept[@]}")
+}
+
 install_apache_bridge_privs() {
-  step "Apache privileges (Bridge sudo)"
+  step "Apache privileges (Bridge sudo / Option B)"
   local dropdir dropdest dropsrc phpdir wrote_php=0
   if ! systemctl cat apache2.service >/dev/null 2>&1; then
-    warn "apache2.service not installed - skip RestrictSUIDSGID drop-in"
+    warn "apache2.service not installed - skip sudo sandbox drop-in"
     return 0
   fi
 
@@ -373,10 +430,21 @@ install_apache_bridge_privs() {
   dropdir=/etc/systemd/system/apache2.service.d
   dropdest="${dropdir}/nre-sudo.conf"
   mkdir -p "${dropdir}"
-  cp "${dropsrc}" "${dropdest}"
+
+  nre_collect_apache_inaccessible_paths
+  nre_filter_sudoers_inaccessible_paths
+  {
+    cat "${dropsrc}"
+    if ((${#NRE_INACC_PATHS[@]})); then
+      printf '%s\n' 'InaccessiblePaths=' "InaccessiblePaths=${NRE_INACC_PATHS[*]}"
+    fi
+  } > "${dropdest}"
   chmod 644 "${dropdest}"
   systemctl daemon-reload
-  ok "installed ${dropdest} (RestrictSUIDSGID=no)"
+  ok "installed ${dropdest} (RestrictSUIDSGID=no, sudoers readable)"
+  if [[ -f /etc/systemd/system/apache2.service.d/zz-allow-sudoers.conf ]]; then
+    warn "zz-allow-sudoers.conf still present - nre-sudo.conf now owns Option B; you can remove the zz- file"
+  fi
 
   for phpdir in /etc/php/*/apache2/conf.d; do
     [[ -d "${phpdir}" ]] || continue
@@ -390,7 +458,7 @@ install_apache_bridge_privs() {
 
   if systemctl is-active --quiet apache2; then
     systemctl restart apache2
-    ok "apache2 restarted so RestrictSUIDSGID applies"
+    ok "apache2 restarted so sandbox drop-in applies"
   fi
 }
 
@@ -562,12 +630,25 @@ cmd_check() {
     soft_fail "apache2 drop-in nre-sudo.conf missing (PHP cannot sudo under RestrictSUIDSGID)"
   fi
   if systemctl cat apache2.service >/dev/null 2>&1; then
-    local rsgid
+    local rsgid ipaths binds
     rsgid="$(systemctl show apache2 -p RestrictSUIDSGID --value 2>/dev/null || true)"
     if [[ "${rsgid}" == "no" ]]; then
       ok "apache2 RestrictSUIDSGID=no"
     else
       soft_fail "apache2 RestrictSUIDSGID=${rsgid:-unknown} (PHP sudo blocked; sudo $0 update)"
+    fi
+    ipaths="$(systemctl show apache2 -p InaccessiblePaths --value 2>/dev/null || true)"
+    if [[ " ${ipaths} " == *" /etc/sudoers "* || " ${ipaths} " == *" -/etc/sudoers "* \
+       || " ${ipaths} " == *" /etc/sudoers.d "* || " ${ipaths} " == *" -/etc/sudoers.d "* ]]; then
+      soft_fail "apache2 InaccessiblePaths still hides sudoers (PHP sudo sees no rules)"
+    else
+      ok "apache2 InaccessiblePaths does not hide sudoers"
+    fi
+    binds="$(systemctl show apache2 -p BindReadOnlyPaths --value 2>/dev/null || true)"
+    if [[ " ${binds} " == *" /etc/sudoers "* && " ${binds} " == *" /etc/sudoers.d "* ]]; then
+      ok "apache2 BindReadOnlyPaths includes sudoers"
+    else
+      soft_fail "apache2 BindReadOnlyPaths missing /etc/sudoers{,.d}"
     fi
   fi
 

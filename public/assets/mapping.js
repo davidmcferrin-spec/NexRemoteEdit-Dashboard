@@ -2,6 +2,15 @@
 
 let mapData = null;
 
+const POLICY_LABEL = {
+  coturn_then_p2p: 'coturn then P2P',
+  relay_only: 'Jump relay only',
+};
+
+function isOnPremOnly(m) {
+  return !m.jump_device_id;
+}
+
 function esc(s) {
   return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
 }
@@ -17,17 +26,22 @@ async function loadMaps() {
   const tb = document.querySelector('#mapTable tbody');
   tb.innerHTML = (mapData.maps || []).map(m => {
     const tel = m.telegraf_hostname || '';
+    const onPrem = isOnPremOnly(m);
     const missing = !tel ? ' style="color:var(--yellow)"' : '';
+    const jumpName = onPrem ? 'On-prem only' : (m.jump_display_name || '—');
+    const jumpHost = onPrem ? '—' : (m.jump_hostname || '—');
+    const policy = onPrem ? '—' : (POLICY_LABEL[m.relay_policy] || m.relay_policy || '—');
+    const turns = onPrem ? '—' : ((m.turn_server_ids || []).join(', ') || 'any');
     return `<tr>
-      <td>${esc(m.jump_display_name)}</td>
-      <td>${esc(m.jump_hostname)}</td>
+      <td>${esc(jumpName)}</td>
+      <td>${esc(jumpHost)}</td>
       <td${missing}>${esc(tel || '— unmapped —')}</td>
       <td>${esc((m.aliases || []).join(', '))}</td>
-      <td>${esc(m.relay_policy)}</td>
-      <td>${esc((m.turn_server_ids || []).join(', ') || 'any')}</td>
+      <td>${esc(policy)}</td>
+      <td>${esc(turns)}</td>
       <td><button class="btn btn-sm btn-secondary" data-edit="${m.id}">Edit</button></td>
     </tr>`;
-  }).join('') || '<tr><td colspan="7">No Jump devices yet — start the bridge after Settings.</td></tr>';
+  }).join('') || '<tr><td colspan="7">No mappings yet. On-prem bays appear after the first Telegraf sample. Jump devices appear after the bridge polls Jump.</td></tr>';
 
   tb.querySelectorAll('[data-edit]').forEach(btn => {
     btn.addEventListener('click', () => openMap(Number(btn.dataset.edit)));

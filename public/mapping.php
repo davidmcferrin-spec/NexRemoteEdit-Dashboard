@@ -17,7 +17,7 @@ $nre_active = 'mapping';
 <?php require __DIR__ . '/includes/nav.php'; ?>
 <main class="admin-page">
   <h1 class="page-title">Setup — Mapping</h1>
-  <p class="hint">Join Jump devices to Telegraf hostnames. Names should match; if they don’t, link them here. Relay policy is per computer: <strong>coturn then P2P</strong> or <strong>Jump relay only</strong>.</p>
+  <p class="hint">The live unit is the bay (Telegraf). Jump is optional. <strong>Jump Desktop profiles</strong> are what actually send a remote session to on-prem coturn first or force Jump relay — this page does not write those profiles. Record the same intent here so Live and History interpret the session. On-prem-only editors never need Jump, a profile, or a TURN pin.</p>
 
   <section class="admin-section">
     <h2>Device identity</h2>
@@ -41,7 +41,7 @@ $nre_active = 'mapping';
 
   <section class="admin-section">
     <h2>Unmapped Telegraf hosts</h2>
-    <p class="hint">Seen in the last 24 hours with no device_maps row.</p>
+    <p class="hint">Seen in the last 24 hours with no mapping row. On-prem-only bays usually auto-create a host row on first sample. Use this list when the Windows name and a Jump computer name differ.</p>
     <ul class="admin-list" id="unmappedTel"></ul>
   </section>
 
@@ -78,13 +78,14 @@ $nre_active = 'mapping';
       <label>Aliases <span class="hint-inline">comma-separated</span>
         <input type="text" id="mapAliases">
       </label>
-      <label>Relay policy
+      <label>Relay policy <span class="hint-inline">match the Jump Desktop profile; unused for on-prem-only</span>
         <select id="mapPolicy">
           <option value="coturn_then_p2p">On-prem coturn first, then P2P</option>
           <option value="relay_only">Jump relay only</option>
         </select>
       </label>
       <div class="edit-section-title">TURN servers for this computer</div>
+      <p class="hint">Pin which coturn <code>/metrics</code> URLs belong to this Jump profile. Leave all unchecked for on-prem-only editors.</p>
       <div id="mapTurns" class="checkbox-grid"></div>
       <label>Notes
         <input type="text" id="mapNotes">

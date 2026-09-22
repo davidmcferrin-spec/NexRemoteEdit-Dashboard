@@ -1,6 +1,6 @@
 'use strict';
 
-const state = { hosts: new Map(), unmatched: {}, filter: '', watchlist: [] };
+const state = { hosts: new Map(), unmatched: {}, filter: '', watchlist: [], expanded: new Set(), procsOpen: new Set() };
 let ws = null;
 let rafQueued = false;
 
@@ -38,18 +38,45 @@ function fmtBytes(n) {
 
 function metricBar(label, val) {
   const n = val == null ? null : Number(val);
-  const pct = n == null ? 0 : Math.max(0, Math.min(100, n));
+  const pct = n == null || Number.isNaN(n) ? 0 : Math.max(0, Math.min(100, n));
   const cls = pct >= 90 ? 'crit' : pct >= 75 ? 'warn' : '';
-  const shown = n == null ? '—' : pct.toFixed(0) + '%';
-  return `<div class="disk-row">
-    <span class="disk-label">${esc(label)}</span>
-    <div class="disk-bar-wrap"><div class="disk-bar ${cls}" style="width:${pct}%"></div></div>
-    <span class="disk-free">${shown}</span>
+  const shown = n == null || Number.isNaN(n) ? '—' : String(Math.round(pct));
+  return `<div class="meter" title="${esc(label)} ${shown === '—' ? 'unknown' : shown + '%'}">
+    <span class="meter-label">${esc(label)}</span>
+    <div class="meter-bar"><div class="meter-fill ${cls}" style="width:${pct}%"></div></div>
+    <span class="meter-val">${shown}</span>
   </div>`;
+}
+
+function userLine(users, fg) {
+  const focus = fg ? `<span class="card-focus" title="${esc(fg)}">${esc(fg)}</span>` : '';
+  if (!users.length) {
+    return `<div class="card-user"><span class="card-user-empty">No one logged on</span>${focus}</div>`;
+  }
+  const more = users.slice(1);
+  return `<div class="card-user">
+    <span class="card-user-name">${esc(users[0])}</span>
+    ${more.length ? `<span class="card-user-more">${esc(more.join(', '))}</span>` : ''}
+    ${focus}
+  </div>`;
+}
+
+function statusBadge(stale, cls, active) {
+  if (stale) return '<span class="badge badge-idle">stale</span>';
+  if (cls === 'degraded') return '<span class="badge badge-degraded">unhealthy</span>';
+  if (active === true) return '<span class="badge badge-connected">active</span>';
+  if (active === false) return '<span class="badge badge-idle">idle</span>';
+  return '<span class="badge badge-connected">up</span>';
 }
 
 function hostKey(h) {
   return String(h || '').toLowerCase().split('.')[0];
+}
+
+function historyLink(hostname) {
+  if (!window.NRE_CAN_HISTORY || !hostname) return '';
+  const q = new URLSearchParams({ host: hostname, range: '8h' });
+  return `<a class="btn btn-sm btn-secondary card-history" href="history.php?${q.toString()}" title="CPU, memory, sessions, and events">History</a>`;
 }
 
 const STALE_SEC = 180;
@@ -86,6 +113,12 @@ function winUsers(h) {
   return sess.map(s => s.username).filter(Boolean);
 }
 
+function machineHot(tel) {
+  const mem = tel.mem_pct == null ? null : Number(tel.mem_pct);
+  const diskHot = (tel.disk || []).some(d => d.used_pct != null && Number(d.used_pct) >= 90);
+  return diskHot || (mem != null && !Number.isNaN(mem) && mem >= 95);
+}
+
 function cardHtml(h) {
   const tel = h.telemetry || {};
   const gpu = (tel.gpu && tel.gpu[0]) || {};
@@ -99,9 +132,14 @@ function cardHtml(h) {
   const stale = age != null && age > STALE_SEC;
   const fg = tel.foreground_app || h.foreground_app || '';
   const inputs = inputSummary(tel);
-  let cls = jump ? 'connected' : (h.online ? 'checking' : 'offline');
-  if (!jump && h.online && active === false) cls = 'idle';
+  const uptimeSec = h.uptime_sec ?? tel.uptime_sec;
+  const uptimeLabel = uptimeSec != null && uptimeSec !== '' ? fmtUptime(uptimeSec) : '';
+  let cls = 'offline';
   if (stale) cls = 'stale';
+  else if (h.online || age != null) cls = machineHot(tel) ? 'degraded' : 'connected';
+  const key = hostKey(h.hostname);
+  const expanded = state.expanded.has(key);
+  const procsOpen = state.procsOpen.has(key);
   const disks = (tel.disk || []).map(d => {
     const freePct = d.used_pct != null ? 100 - Number(d.used_pct) : null;
     return `<div class="disk-row">
@@ -110,6 +148,10 @@ function cardHtml(h) {
       <span class="disk-free">${freePct != null ? freePct.toFixed(0) + '% free' : fmtBytes(d.free)}</span>
     </div>`;
   }).join('');
+  const hotDisks = (tel.disk || []).filter(d => d.used_pct != null && Number(d.used_pct) >= 90).map(d => {
+    const free = Math.max(0, 100 - Number(d.used_pct));
+    return `${d.volume || '?'} ${free.toFixed(0)}% free`;
+  });
   const chips = watched.map(p =>
     `<span class="watch-chip" title="${esc(p.name)}">${esc((p.watch || []).join(', ') || p.name)}</span>`
   ).join('');
@@ -126,32 +168,43 @@ function cardHtml(h) {
       <div class="canvas-section-title">Jump remote</div>
       <div class="card-meta">${esc(jump.user_email || '—')} · ${esc(jump.transport || '')} · ${fmtDur(jump.duration_sec)} · ${esc(jump.client_ip || '')}</div>
     </div>` : '';
-  return `<article class="host-card ${cls}" data-host="${esc(hostKey(h.hostname))}">
+  const detailBits = [];
+  if (uptimeLabel) detailBits.push('up ' + uptimeLabel);
+  if (idleSec != null && active === false) detailBits.push('idle ' + fmtDur(idleSec));
+  if (age != null) detailBits.push(fmtAge(age));
+  if (inputs) detailBits.push(inputs);
+  return `<article class="host-card ${cls}${expanded ? ' expanded' : ''}" data-host="${esc(key)}">
     <div class="card-header">
-      <span class="status-dot"></span>
-      <div class="card-title">
+      <div class="card-header-top">
+        <span class="status-dot"></span>
         <div class="card-name">${esc(h.display_name || h.hostname)}</div>
-        <div class="card-meta">${esc(users.join(', ') || 'Windows user unknown')} · up ${esc(fmtUptime(h.uptime_sec ?? tel.uptime_sec))}${fg ? ' · ' + esc(fg) : ''}${idleSec != null && active === false ? ' · idle ' + esc(fmtDur(idleSec)) : ''}${age != null ? ' · ' + esc(fmtAge(age)) : ''}${inputs ? ' · ' + esc(inputs) : ''}</div>
+        <div class="card-badges">
+          ${historyLink(h.hostname)}
+          ${statusBadge(stale, cls, active)}
+          ${jump ? `<span class="badge badge-connected">${esc(jump.transport || 'jump')}</span>` : '<span class="badge badge-checking">local</span>'}
+        </div>
+        <span class="card-expand-icon" aria-hidden="true">▾</span>
       </div>
-      <div class="card-badges">
-        ${stale ? '<span class="badge badge-idle">stale</span>' : (active === true ? '<span class="badge badge-connected">active</span>' : (active === false ? '<span class="badge badge-idle">idle</span>' : ''))}
-        ${jump ? `<span class="badge badge-connected">${esc(jump.transport || 'jump')}</span>` : '<span class="badge badge-checking">local</span>'}
-      </div>
+      ${userLine(users, fg)}
     </div>
-    <div class="card-body" style="display:block">
-      <div class="disk-section">
+    <div class="card-meters">
+      <div class="meter-row">
         ${metricBar('CPU', tel.cpu_pct)}
         ${metricBar('MEM', tel.mem_pct)}
         ${metricBar('GPU', gpu.util_pct)}
-        ${disks}
       </div>
+      ${hotDisks.length ? `<div class="disk-hot-line">${esc(hotDisks.join(' · '))}</div>` : ''}
+    </div>
+    <div class="card-body">
+      ${detailBits.length ? `<div class="card-details">${esc(detailBits.join(' · '))}</div>` : ''}
+      ${disks ? `<div class="disk-section">${disks}</div>` : ''}
       ${chips ? `<div class="watch-chips">${chips}</div>` : ''}
       ${jumpBlock}
       <div class="app-section">
-        <button type="button" class="app-section-toggle" data-toggle-procs="${esc(hostKey(h.hostname))}">
+        <button type="button" class="app-section-toggle${procsOpen ? ' open' : ''}" data-toggle-procs="${esc(key)}">
           Processes (${procs.length})${watched.length ? ' · ' + watched.length + ' pinned' : ''}
         </button>
-        <ul class="app-list" hidden>${procRows || '<li class="hint">No process list in last sample</li>'}</ul>
+        <ul class="app-list"${procsOpen ? '' : ' hidden'}>${procRows || '<li class="hint">No process list in last sample</li>'}</ul>
       </div>
     </div>
   </article>`;
@@ -293,12 +346,28 @@ document.getElementById('searchInput')?.addEventListener('input', (e) => {
 });
 
 document.getElementById('sessionGrid')?.addEventListener('click', (e) => {
-  const btn = e.target.closest('[data-toggle-procs]');
-  if (!btn) return;
-  const list = btn.parentElement?.querySelector('.app-list');
-  if (!list) return;
-  list.hidden = !list.hidden;
-  btn.classList.toggle('open', !list.hidden);
+  const procBtn = e.target.closest('[data-toggle-procs]');
+  if (procBtn) {
+    const list = procBtn.parentElement?.querySelector('.app-list');
+    if (!list) return;
+    list.hidden = !list.hidden;
+    procBtn.classList.toggle('open', !list.hidden);
+    const key = procBtn.dataset.toggleProcs;
+    if (key) {
+      if (list.hidden) state.procsOpen.delete(key);
+      else state.procsOpen.add(key);
+    }
+    return;
+  }
+  if (e.target.closest('a')) return;
+  const header = e.target.closest('.card-header');
+  if (!header) return;
+  const card = header.closest('.host-card');
+  const key = card?.dataset.host;
+  if (!card || !key) return;
+  card.classList.toggle('expanded');
+  if (card.classList.contains('expanded')) state.expanded.add(key);
+  else state.expanded.delete(key);
 });
 
 const btnPw = document.getElementById('btnChangePw');

@@ -31,7 +31,7 @@ $nre_active = 'bridge';
     </div>
     <?php endif; ?>
   </div>
-  <p class="hint">systemd unit <code>nre-bridge</code>. <code>setup.sh</code> installs <code>/etc/sudoers.d/nre-bridge</code> and an Apache drop-in that sets <code>RestrictSUIDSGID=no</code> so PHP can run <code>sudo -n</code>.</p>
+  <p class="hint">systemd unit <code>nre-bridge</code>. <code>setup.sh</code> installs <code>/etc/sudoers.d/nre-bridge</code> and an Apache drop-in so PHP can <code>sudo -n</code> inside the sandbox (<code>RestrictSUIDSGID=no</code>, sudoers not on <code>InaccessiblePaths</code>).</p>
   <div class="log-panel">
     <div class="log-toolbar">
       <label>Lines

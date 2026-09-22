@@ -45,7 +45,7 @@ sudo ./setup.sh status
 
 The script is idempotent. It writes the Postgres password into `data/config.json` (Settings). No `.env`. Existing `data/config.json` and `data/auth.json` are never overwritten on update.
 
-Templates: `deploy/apache-nre.conf`, `deploy/sudoers-nre` (`/etc/sudoers.d/nre-bridge`), `deploy/apache2-nre-sudo.conf` (`RestrictSUIDSGID=no` so PHP can `sudo`). Env overrides: `NRE_PREFIX`, `NRE_SERVER_NAME`, `NRE_INGEST_PORT`, `NRE_WS_PORT`.
+Templates: `deploy/apache-nre.conf`, `deploy/sudoers-nre` (`/etc/sudoers.d/nre-bridge`), `deploy/apache2-nre-sudo.conf` (Apache sandbox: `RestrictSUIDSGID=no` plus sudoers readable — Option B). Env overrides: `NRE_PREFIX`, `NRE_SERVER_NAME`, `NRE_INGEST_PORT`, `NRE_WS_PORT`.
 
 First visit to login creates `data/auth.json` with **`admin` / `admin`** (must change password). Browsers need TCP **8765** for the live WebSocket (trusted subnets only — WS is unauthenticated, same as xpmon). Do not expose ingest to the internet.
 
@@ -161,7 +161,7 @@ Retention: **90 days** of sessions, work intervals, telemetry, minute rollups, e
 | History | Workstation intervals for every editor, Jump sessions, CPU/memory/disk/GPU/idle/active/input charts, focused-app time, pinned-app CPU and memory |
 | Events | Searchable log + unmatched section |
 | Windows | Crash / reboot / shutdown / update; filter by keyword, severity, computer |
-| Mapping | Identity, policy, TURN assignment, IP lookup |
+| Mapping | Identity; record of the Jump Desktop TURN profile; TURN pin; IP lookup. On-prem-only bays need no Jump row |
 | Telegraf | Install agent + idle helper + win_eventlog; copy ingest config |
 | Settings | All app config → `data/config.json` |
 | Admin | Users, LDAP, session timeout (`data/auth.json`) |
@@ -176,7 +176,8 @@ Roles: `admin`, `operator`, `viewer`, `bridge_monitor`, `kiosk`.
 - No `.env`. Settings UI writes JSON. Secrets are masked on GET; a newly generated Telegraf token is shown **once**.
 - Ingest is internal-only (CIDR + Bearer).
 - Multiple TURN servers, metrics URL only.
-- Relay policies in scope: `coturn_then_p2p` and `relay_only`.
+- Relay policies in scope: `coturn_then_p2p` and `relay_only`. Jump Desktop **profiles** are the source of truth (coturn first vs Jump relay). Mapping stores that same intent for Live/History; it does not push a profile to Jump.
+- On-prem-only editors have no Jump device, profile, or TURN pin. Telegraf + idle helper is enough.
 - Jump’s documented default is often P2P-then-relay; we store **your** per-computer policy instead of assuming Jump’s default.
 - WebSocket is live-only and unauthenticated — restrict port 8765.
 

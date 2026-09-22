@@ -4,6 +4,7 @@ require_once __DIR__ . '/includes/config.php';
 require_permission('dashboard');
 
 $user = session_user_payload_full();
+$canHistory = !empty($user['permissions']['history']);
 $cfg = nre_load_config();
 $ws_host = getenv('NRE_WS_HOST') ?: $_SERVER['HTTP_HOST'];
 $ws_host = preg_replace('/:\d+$/', '', $ws_host);
@@ -57,7 +58,7 @@ $isKiosk = !empty($user['is_kiosk']);
 <?php endif; ?>
 
 <div class="toast-container" id="toastContainer"></div>
-<script>window.NRE_WS_URL = <?= json_encode($ws_url) ?>;</script>
+<script>window.NRE_WS_URL = <?= json_encode($ws_url) ?>; window.NRE_CAN_HISTORY = <?= $canHistory ? 'true' : 'false' ?>;</script>
 <script src="assets/theme.js"></script>
 <script src="assets/app.js"></script>
 </body>
