@@ -45,7 +45,7 @@ sudo ./setup.sh status
 
 The script is idempotent. It writes the Postgres password into `data/config.json` (Settings). No `.env`. Existing `data/config.json` and `data/auth.json` are never overwritten on update.
 
-Templates: `deploy/apache-nre.conf`, `deploy/sudoers-nre` (installed as `/etc/sudoers.d/nre-bridge` for the Bridge page). Env overrides: `NRE_PREFIX`, `NRE_SERVER_NAME`, `NRE_INGEST_PORT`, `NRE_WS_PORT`.
+Templates: `deploy/apache-nre.conf`, `deploy/sudoers-nre` (`/etc/sudoers.d/nre-bridge`), `deploy/apache2-nre-sudo.conf` (`RestrictSUIDSGID=no` so PHP can `sudo`). Env overrides: `NRE_PREFIX`, `NRE_SERVER_NAME`, `NRE_INGEST_PORT`, `NRE_WS_PORT`.
 
 First visit to login creates `data/auth.json` with **`admin` / `admin`** (must change password). Browsers need TCP **8765** for the live WebSocket (trusted subnets only — WS is unauthenticated, same as xpmon). Do not expose ingest to the internet.
 
@@ -103,12 +103,12 @@ The in-app **Telegraf** page has a copy-paste Windows ZIP install (there is no M
     class_name = "Win32_ComputerSystem"
     properties = ["UserName", "Name"]
 
-# Last mouse/keyboard input — written by nre-idle.ps1 in the user session
+# Last input, focused process, and input counts — nre-idle.ps1 in the user session
 [[inputs.file]]
   files = ["C:/ProgramData/nre/idle.influx"]
   data_format = "influx"
 
-# Crash / unexpected reboot / user reboot / shutdown / Windows Update
+# Crash / reboot / shutdown / Windows Update / interactive logon
 [[inputs.win_eventlog]]
   from_beginning = false
   xpath_query = '''
@@ -122,13 +122,17 @@ The in-app **Telegraf** page has a copy-paste Windows ZIP install (there is no M
     <Query Id="2" Path="Microsoft-Windows-WindowsUpdateClient/Operational">
       <Select Path="Microsoft-Windows-WindowsUpdateClient/Operational">*[System[(EventID=19 or EventID=20 or EventID=43)]]</Select>
     </Query>
+    <Query Id="3" Path="Security">
+      <Select Path="Security">*[System[(EventID=4634 or EventID=4647 or EventID=4800 or EventID=4801)]]</Select>
+      <Select Path="Security">*[System[(EventID=4624)]] and *[EventData[Data[@Name='LogonType']='2' or Data[@Name='LogonType']='7' or Data[@Name='LogonType']='10' or Data[@Name='LogonType']='11']]</Select>
+    </Query>
   </QueryList>
   '''
 ```
 
-Live shows every bay that has sent telemetry in the last ~3 minutes, **with or without** a Jump session. A bay is **active** when `idle_sec` is under Settings → Telegraf → **Active if idle under**. Settings → **Key editing processes** pins Premiere / After Effects / etc. to the top of the process list.
+Live keeps the last CPU, memory, disk, user, and process list for 24 hours, so a partial Telegraf post cannot blank the card. A bay is marked **stale** when nothing has arrived for 3 minutes. It is shown **with or without** a Jump session. A bay is **active** when `idle_sec` is under Settings → Telegraf → **Active if idle under**. Settings → **Key editing processes** pins Premiere / After Effects / etc. to the top of the process list. History records a work interval for every logged-on editor, including machines that are not in Jump.
 
-**Windows** lists crash (1001), unexpected/forced reboot (41, 6008), user/app reboot or shutdown (1074, 6006, 13), and Windows Update (19 / 20 / 43). Filter by keywords, severity, computer, and kind. Retention is **90 days** with the rest of history. Telegraf must run as Local System to read the System log.
+**Windows** lists crash (1001), unexpected/forced reboot (41, 6008), user/app reboot or shutdown (1074, 6006, 13), Windows Update (19 / 20 / 43), and interactive logon / logoff / lock / unlock (4624 types 2, 7, 10, 11, plus 4634, 4647, 4800, 4801). Filter by keywords, severity, computer, and kind. Retention is **90 days** with the rest of history. Telegraf must run as Local System to read the System and Security logs.
 
 ---
 
@@ -145,7 +149,7 @@ Live shows every bay that has sent telemetry in the last ~3 minutes, **with or w
 
 Unmatched telemetry or devices are **kept** and shown on Events / Mapping. Nothing is silently dropped.
 
-Retention: **90 days** of sessions, telemetry, events, and TURN snapshots. Maps and devices are kept.
+Retention: **90 days** of sessions, work intervals, telemetry, minute rollups, events, and TURN snapshots. Maps and devices are kept.
 
 ---
 
@@ -153,8 +157,8 @@ Retention: **90 days** of sessions, telemetry, events, and TURN snapshots. Maps 
 
 | Page | Who |
 |---|---|
-| Live | Every bay with Telegraf: Windows user, uptime, idle/active, CPU/mem/GPU/disk, pinned processes; Jump overlay when remoted |
-| History | Date + host; session table; canvas charts; TURN counters |
+| Live | Every bay with Telegraf, including on-prem editors with no Jump session. Last-known CPU/mem/GPU/disk, Windows user, focused app, idle/active; stale after 3 minutes instead of disappearing |
+| History | Workstation intervals for every editor, Jump sessions, CPU/memory/disk/GPU/idle/active/input charts, focused-app time, pinned-app CPU and memory |
 | Events | Searchable log + unmatched section |
 | Windows | Crash / reboot / shutdown / update; filter by keyword, severity, computer |
 | Mapping | Identity, policy, TURN assignment, IP lookup |

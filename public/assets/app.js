@@ -52,6 +52,35 @@ function hostKey(h) {
   return String(h || '').toLowerCase().split('.')[0];
 }
 
+const STALE_SEC = 180;
+
+function sampleAge(h) {
+  const ts = h.ts || (h.telemetry && h.telemetry.ts);
+  if (!ts) return null;
+  const ms = Date.now() - new Date(ts).getTime();
+  if (!Number.isFinite(ms)) return null;
+  return Math.max(0, Math.round(ms / 1000));
+}
+
+function fmtAge(sec) {
+  if (sec == null) return '';
+  if (sec < 90) return 'updated just now';
+  return 'updated ' + fmtDur(sec) + ' ago';
+}
+
+function inputSummary(tel) {
+  const mouse = Number(tel.input_mouse || 0);
+  const clicks = Number(tel.input_clicks || 0);
+  const keys = Number(tel.input_keys || 0);
+  const pulses = Number(tel.input_pulses || 0);
+  const parts = [];
+  if (mouse) parts.push(mouse + ' moves');
+  if (clicks) parts.push(clicks + ' clicks');
+  if (keys) parts.push(keys + ' keys');
+  if (!parts.length && pulses) parts.push(pulses + ' input changes');
+  return parts.join(' · ');
+}
+
 function winUsers(h) {
   const sess = h.windows_sessions || (h.telemetry && h.telemetry.windows_sessions) || [];
   return sess.map(s => s.username).filter(Boolean);
@@ -66,8 +95,13 @@ function cardHtml(h) {
   const watched = procs.filter(p => p.watch && p.watch.length);
   const idleSec = h.idle_sec ?? tel.idle_sec;
   const active = h.active ?? tel.active;
+  const age = sampleAge(h);
+  const stale = age != null && age > STALE_SEC;
+  const fg = tel.foreground_app || h.foreground_app || '';
+  const inputs = inputSummary(tel);
   let cls = jump ? 'connected' : (h.online ? 'checking' : 'offline');
   if (!jump && h.online && active === false) cls = 'idle';
+  if (stale) cls = 'stale';
   const disks = (tel.disk || []).map(d => {
     const freePct = d.used_pct != null ? 100 - Number(d.used_pct) : null;
     return `<div class="disk-row">
@@ -85,7 +119,7 @@ function cardHtml(h) {
       <span class="app-status-dot"></span>
       <span class="app-name">${esc(p.name)}${pin ? ' <span class="badge badge-update">' + esc(p.watch.join(', ')) + '</span>' : ''}</span>
       <span class="app-version">${esc(p.user || '')}</span>
-      <span class="app-state-label">${p.cpu != null ? Number(p.cpu).toFixed(1) + '%' : '—'}</span>
+      <span class="app-state-label">${p.cpu != null ? Number(p.cpu).toFixed(1) + '%' : '—'}${p.rss ? ' · ' + fmtBytes(p.rss) : ''}</span>
     </li>`;
   }).join('');
   const jumpBlock = jump ? `<div class="canvas-section">
@@ -97,10 +131,10 @@ function cardHtml(h) {
       <span class="status-dot"></span>
       <div class="card-title">
         <div class="card-name">${esc(h.display_name || h.hostname)}</div>
-        <div class="card-meta">${esc(users.join(', ') || 'Windows user unknown')} · up ${esc(fmtUptime(h.uptime_sec ?? tel.uptime_sec))}${idleSec != null && active === false ? ' · idle ' + esc(fmtDur(idleSec)) : ''}</div>
+        <div class="card-meta">${esc(users.join(', ') || 'Windows user unknown')} · up ${esc(fmtUptime(h.uptime_sec ?? tel.uptime_sec))}${fg ? ' · ' + esc(fg) : ''}${idleSec != null && active === false ? ' · idle ' + esc(fmtDur(idleSec)) : ''}${age != null ? ' · ' + esc(fmtAge(age)) : ''}${inputs ? ' · ' + esc(inputs) : ''}</div>
       </div>
       <div class="card-badges">
-        ${active === true ? '<span class="badge badge-connected">active</span>' : (active === false ? '<span class="badge badge-idle">idle</span>' : '')}
+        ${stale ? '<span class="badge badge-idle">stale</span>' : (active === true ? '<span class="badge badge-connected">active</span>' : (active === false ? '<span class="badge badge-idle">idle</span>' : ''))}
         ${jump ? `<span class="badge badge-connected">${esc(jump.transport || 'jump')}</span>` : '<span class="badge badge-checking">local</span>'}
       </div>
     </div>
@@ -159,8 +193,9 @@ function render() {
   if (banner) {
     const n = list.length;
     const rem = list.filter(h => h.jump).length;
-    const actn = list.filter(h => (h.active ?? (h.telemetry || {}).active) === true).length;
-    banner.textContent = `${n} bay${n === 1 ? '' : 's'} · ${actn} active · ${rem} remoted via Jump`;
+    const actn = list.filter(h => !((sampleAge(h) || 0) > STALE_SEC) && (h.active ?? (h.telemetry || {}).active) === true).length;
+    const staleN = list.filter(h => (sampleAge(h) || 0) > STALE_SEC).length;
+    banner.textContent = `${n} bay${n === 1 ? '' : 's'} · ${actn} active · ${rem} remoted via Jump${staleN ? ' · ' + staleN + ' stale' : ''}`;
   }
 }
 
@@ -203,11 +238,14 @@ function handleMsg(msg) {
   } else if (msg.type === 'telemetry_update') {
     const hk = hostKey(msg.hostname);
     const cur = state.hosts.get(hk) || { hostname: msg.hostname, display_name: msg.hostname, online: true };
-    cur.telemetry = msg.telemetry || cur.telemetry;
-    cur.windows_sessions = (msg.telemetry && msg.telemetry.windows_sessions) || cur.windows_sessions;
-    cur.uptime_sec = (msg.telemetry && msg.telemetry.uptime_sec) != null ? msg.telemetry.uptime_sec : cur.uptime_sec;
-    cur.idle_sec = (msg.telemetry && msg.telemetry.idle_sec) != null ? msg.telemetry.idle_sec : cur.idle_sec;
-    if (msg.telemetry && msg.telemetry.active != null) cur.active = msg.telemetry.active;
+    const tel = msg.telemetry || {};
+    cur.telemetry = tel;
+    cur.windows_sessions = tel.windows_sessions || [];
+    if (tel.uptime_sec != null) cur.uptime_sec = tel.uptime_sec;
+    if (tel.idle_sec != null) cur.idle_sec = tel.idle_sec;
+    if (tel.active != null) cur.active = tel.active;
+    if (tel.ts) cur.ts = tel.ts;
+    cur.foreground_app = tel.foreground_app || '';
     cur.online = true;
     state.hosts.set(hk, cur);
     queueRender();

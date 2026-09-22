@@ -17,7 +17,7 @@ $nre_active = 'windows';
 <?php require __DIR__ . '/includes/nav.php'; ?>
 <main class="admin-page">
   <h1 class="page-title">Windows events</h1>
-  <p class="hint">Crashes, unexpected reboots, user reboots/shutdowns, and Windows Update installs from Telegraf <code>win_eventlog</code>. Kept for 90 days (same retention as other history). This is event-log metadata — not crash dumps.</p>
+  <p class="hint">Crashes, reboots, shutdowns, Windows Update, and interactive logon, logoff, lock, and unlock events from Telegraf <code>win_eventlog</code>. Kept for 90 days. Service and network logons are not stored. This is event-log metadata — not crash dumps.</p>
 
   <form id="winFilters" class="filter-bar">
     <label>Keywords
@@ -44,6 +44,10 @@ $nre_active = 'windows';
         <option value="reboot">User / app reboot</option>
         <option value="shutdown">Shutdown</option>
         <option value="update">Windows Update</option>
+        <option value="logon">Logon</option>
+        <option value="logoff">Logoff</option>
+        <option value="lock">Lock</option>
+        <option value="unlock">Unlock</option>
         <option value="other">Other</option>
       </select>
     </label>

@@ -47,6 +47,9 @@ CONFIG_PATH = DATA_DIR / "config.json"
 
 WS_MAX_MESSAGE_SIZE = 256 * 1024
 TEL_EPS = 0.5
+LIVE_FRESH_SEC = 180
+LIVE_KEEP_HOURS = 24
+WORK_GAP_SEC = 20 * 60
 
 
 def utcnow() -> datetime:
@@ -142,7 +145,154 @@ def classify_win_event(event_id: Optional[int], source: str, message: str) -> st
         if "shutdown" in msg or "power off" in msg:
             return "shutdown"
         return "reboot"
+    if eid == 4624:
+        return "logon"
+    if eid in (4634, 4647):
+        return "logoff"
+    if eid == 4800:
+        return "lock"
+    if eid == 4801:
+        return "unlock"
     return "other"
+
+
+def logon_type(message: str, fields: Optional[dict] = None) -> Optional[int]:
+    fields = fields or {}
+    raw = fields.get("LogonType") or fields.get("logon_type") or fields.get("Logon Type")
+    if raw is not None and str(raw).strip().isdigit():
+        return int(str(raw).strip())
+    m = re.search(r"Logon Type:\s*(\d+)", message or "", re.I)
+    if not m:
+        return None
+    return int(m.group(1))
+
+
+def accept_security_event(event_id: Optional[int], message: str, fields: Optional[dict] = None) -> bool:
+    """Keep interactive logons. Drop service and network 4624 noise."""
+    if int(event_id or 0) != 4624:
+        return True
+    kind = logon_type(message, fields)
+    return kind in (2, 7, 10, 11)
+
+
+def logon_account(message: str, category: str) -> str:
+    text = message or ""
+    if category == "logon":
+        m = re.search(r"New Logon:\s*.*?Account Name:\s*([^\r\n]+)", text, re.I | re.S)
+    else:
+        m = re.search(r"Account Name:\s*([^\r\n]+)", text, re.I)
+    user = m.group(1).strip() if m else ""
+    if "\\" in user:
+        user = user.split("\\", 1)[1]
+    if user.lower() in ("", "-", "system", "anonymous logon", "local service", "network service"):
+        return ""
+    return user[:128]
+
+
+def primary_user(sessions: Optional[list]) -> str:
+    for s in sessions or []:
+        name = str((s or {}).get("username") or "").strip()
+        if name:
+            return name[:128]
+    return ""
+
+
+def session_kind_for(sessions: Optional[list], jump_email: str) -> str:
+    if jump_email:
+        return "jump"
+    for s in sessions or []:
+        label = str((s or {}).get("session_name") or "").lower()
+        if "rdp" in label:
+            return "rdp"
+    return "local"
+
+
+def disk_free_pct(disks: Optional[list]) -> Optional[float]:
+    vals = []
+    for d in disks or []:
+        if not isinstance(d, dict):
+            continue
+        used = d.get("used_pct")
+        if used is not None:
+            try:
+                vals.append(max(0.0, min(100.0, 100.0 - float(used))))
+                continue
+            except (TypeError, ValueError):
+                pass
+        free, total = d.get("free"), d.get("total")
+        try:
+            if free is not None and total:
+                vals.append(max(0.0, min(100.0, 100.0 * float(free) / float(total))))
+        except (TypeError, ValueError, ZeroDivisionError):
+            continue
+    if not vals:
+        return None
+    return round(min(vals), 2)
+
+
+def watched_brief(procs: Optional[list]) -> list[dict]:
+    out = []
+    for p in procs or []:
+        if not isinstance(p, dict) or not p.get("watch"):
+            continue
+        out.append({
+            "name": p.get("name"),
+            "cpu": p.get("cpu"),
+            "rss": p.get("rss"),
+            "user": p.get("user") or "",
+            "watch": p.get("watch") or [],
+        })
+        if len(out) >= 12:
+            break
+    return out
+
+
+def merge_telemetry(prev: Optional[dict], sample: dict) -> dict:
+    """Fill gaps from the previous reading. Interval counters are not carried."""
+    prev = prev or {}
+    out = {
+        "cpu_pct": sample.get("cpu_pct"),
+        "mem_pct": sample.get("mem_pct"),
+        "mem_used_bytes": sample.get("mem_used_bytes"),
+        "mem_total_bytes": sample.get("mem_total_bytes"),
+        "disk": list(sample.get("disk") or []),
+        "gpu": list(sample.get("gpu") or []),
+        "processes": list(sample.get("processes") or []),
+        "uptime_sec": sample.get("uptime_sec"),
+        "windows_sessions": list(sample.get("windows_sessions") or []),
+        "idle_sec": sample.get("idle_sec"),
+        "active": sample.get("active"),
+        "foreground_app": (sample.get("foreground_app") or "")[:80],
+        "input_mouse": sample.get("input_mouse"),
+        "input_clicks": sample.get("input_clicks"),
+        "input_keys": sample.get("input_keys"),
+        "input_pulses": sample.get("input_pulses"),
+        "user_cleared": bool(prev.get("user_cleared")),
+    }
+    for key in ("cpu_pct", "mem_pct", "mem_used_bytes", "mem_total_bytes", "uptime_sec", "idle_sec"):
+        if out.get(key) is None and prev.get(key) is not None:
+            out[key] = prev[key]
+    for key in ("disk", "gpu", "processes"):
+        if out[key]:
+            continue
+        if key == "processes" and sample.get("saw_procs"):
+            continue
+        if prev.get(key):
+            out[key] = prev[key]
+    if out["windows_sessions"]:
+        out["user_cleared"] = False
+    elif out["user_cleared"]:
+        out["windows_sessions"] = []
+    elif prev.get("windows_sessions"):
+        out["windows_sessions"] = prev["windows_sessions"]
+    if not out["foreground_app"]:
+        out["foreground_app"] = (prev.get("foreground_app") or "")[:80]
+    if out["active"] is None:
+        out["active"] = prev.get("active")
+    for key in ("input_mouse", "input_clicks", "input_keys", "input_pulses"):
+        if out.get(key) is None and prev.get(key) is not None:
+            out[key] = prev[key]
+    return out
 
 
 def win_event_severity(level: Any, level_text: str) -> str:
@@ -327,6 +477,26 @@ class App:
             row_factory=dict_row,
         )
         await self.apply_schema()
+        await self.backfill_latest()
+
+    async def backfill_latest(self) -> None:
+        """Seed last-known rows from recent samples so a restart does not blank Live."""
+        await self.exec(
+            """INSERT INTO telemetry_latest
+               (hostname, ts, cpu_pct, mem_pct, mem_used_bytes, mem_total_bytes,
+                disk_json, gpu_json, processes_json, uptime_sec, windows_sessions,
+                idle_sec, active, foreground_app, input_mouse, input_clicks,
+                input_keys, input_pulses)
+               SELECT DISTINCT ON (hostname)
+                      hostname, ts, cpu_pct, mem_pct, mem_used_bytes, mem_total_bytes,
+                      disk_json, gpu_json, processes_json, uptime_sec, windows_sessions,
+                      idle_sec, active, COALESCE(foreground_app, ''),
+                      input_mouse, input_clicks, input_keys, input_pulses
+               FROM telemetry_samples
+               WHERE ts > now() - interval '24 hours'
+               ORDER BY hostname, ts DESC
+               ON CONFLICT (hostname) DO NOTHING"""
+        )
 
     async def apply_schema(self) -> None:
         sql = SCHEMA_PATH.read_text(encoding="utf-8")
@@ -411,10 +581,9 @@ class App:
                ORDER BY d.display_name"""
         )
         latest = await self.fetchall(
-            """SELECT DISTINCT ON (hostname) *
-               FROM telemetry_samples
-               WHERE ts > now() - interval '3 minutes'
-               ORDER BY hostname, ts DESC"""
+            """SELECT * FROM telemetry_latest
+               WHERE ts > now() - (%s || ' hours')::interval""",
+            (str(LIVE_KEEP_HOURS),),
         )
         for row in latest:
             self._tel_latest[host_key(row.get("hostname"))] = self._row_to_tel(row)
@@ -515,6 +684,11 @@ class App:
             "windows_sessions": row.get("windows_sessions") or [],
             "idle_sec": row.get("idle_sec"),
             "active": row.get("active"),
+            "foreground_app": row.get("foreground_app") or "",
+            "input_mouse": row.get("input_mouse"),
+            "input_clicks": row.get("input_clicks"),
+            "input_keys": row.get("input_keys"),
+            "input_pulses": row.get("input_pulses"),
         }
 
     def _bay_public(self, hostname: str, tel: dict, dmap: Optional[dict], sess: Optional[dict]) -> dict:
@@ -530,6 +704,8 @@ class App:
             "uptime_sec": tel.get("uptime_sec"),
             "idle_sec": tel.get("idle_sec"),
             "active": tel.get("active"),
+            "foreground_app": tel.get("foreground_app") or "",
+            "ts": tel.get("ts"),
             "telemetry": tel,
             "jump": jump,
             "online": bool(tel.get("ts")),
@@ -684,36 +860,57 @@ class App:
 
         for (host, epoch), items in grouped.items():
             ts = datetime.fromtimestamp(epoch, tz=timezone.utc)
-            sample = self._fold_metrics(host, items)
+            raw = self._fold_metrics(host, items)
             if not any((
-                sample.get("cpu_pct") is not None,
-                sample.get("mem_pct") is not None,
-                sample.get("uptime_sec") is not None,
-                sample.get("idle_sec") is not None,
-                sample.get("processes"),
-                sample.get("disk"),
-                sample.get("gpu"),
-                sample.get("windows_sessions"),
+                raw.get("cpu_pct") is not None,
+                raw.get("mem_pct") is not None,
+                raw.get("uptime_sec") is not None,
+                raw.get("idle_sec") is not None,
+                raw.get("processes"),
+                raw.get("disk"),
+                raw.get("gpu"),
+                raw.get("windows_sessions"),
+                raw.get("foreground_app"),
+                raw.get("input_mouse") is not None,
+                raw.get("input_clicks") is not None,
+                raw.get("input_keys") is not None,
+                raw.get("input_pulses") is not None,
             )):
                 continue
+            hk = host_key(host)
+            prev = self._tel_latest.get(hk)
+            merged = merge_telemetry(prev, raw)
+            compact = self._compact_tel(host, ts, merged)
+            remembered = dict(compact)
+            remembered["user_cleared"] = bool(merged.get("user_cleared"))
+            self._tel_latest[hk] = remembered
             await self.exec(
                 """INSERT INTO telemetry_samples
                    (hostname, ts, cpu_pct, mem_pct, mem_used_bytes, mem_total_bytes,
                     disk_json, gpu_json, processes_json, uptime_sec, windows_sessions,
-                    idle_sec, active)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                    idle_sec, active, foreground_app, input_mouse, input_clicks,
+                    input_keys, input_pulses)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                 (
-                    host, ts, sample.get("cpu_pct"), sample.get("mem_pct"),
-                    sample.get("mem_used_bytes"), sample.get("mem_total_bytes"),
-                    Json(sample.get("disk") or []),
-                    Json(sample.get("gpu") or []),
-                    Json(sample.get("processes") or []),
-                    sample.get("uptime_sec"),
-                    Json(sample.get("windows_sessions") or []),
-                    sample.get("idle_sec"),
-                    sample.get("active"),
+                    host, ts, raw.get("cpu_pct"), raw.get("mem_pct"),
+                    raw.get("mem_used_bytes"), raw.get("mem_total_bytes"),
+                    Json(raw.get("disk") or []),
+                    Json(raw.get("gpu") or []),
+                    Json(raw.get("processes") or []),
+                    raw.get("uptime_sec"),
+                    Json(raw.get("windows_sessions") or []),
+                    raw.get("idle_sec"),
+                    raw.get("active"),
+                    raw.get("foreground_app") or "",
+                    raw.get("input_mouse"),
+                    raw.get("input_clicks"),
+                    raw.get("input_keys"),
+                    raw.get("input_pulses"),
                 ),
             )
+            await self._save_latest(host, ts, merged)
+            await self._save_minute(host, ts, raw, merged)
+            await self.touch_work_interval(host, ts, merged)
             await self.exec(
                 """UPDATE devices SET last_telemetry_at = %s, updated_at = now()
                    WHERE lower(hostname) = lower(%s)
@@ -724,23 +921,9 @@ class App:
                 (ts, host, host),
             )
             await self.ensure_host_map(host)
-
-            compact = {
-                "hostname": host,
-                "ts": iso(ts),
-                "cpu_pct": sample.get("cpu_pct"),
-                "mem_pct": sample.get("mem_pct"),
-                "gpu": sample.get("gpu") or [],
-                "disk": sample.get("disk") or [],
-                "processes": sample.get("processes") or [],
-                "uptime_sec": sample.get("uptime_sec"),
-                "windows_sessions": sample.get("windows_sessions") or [],
-                "idle_sec": sample.get("idle_sec"),
-                "active": sample.get("active"),
-            }
-            prev = self._tel_latest.get(host_key(host))
-            self._tel_latest[host_key(host)] = compact
-            if prev and not self._tel_changed(prev, compact):
+            prev_ts = parse_ts((prev or {}).get("ts"))
+            aged = prev_ts is None or (ts - prev_ts).total_seconds() >= 60
+            if prev and not aged and not self._tel_changed(prev, compact):
                 continue
             await self.broadcast_if_changed(
                 f"tel:{host_key(host)}",
@@ -759,6 +942,8 @@ class App:
             event_id = _as_int(_field(tags, fields, "EventID", "event_id"))
             source = str(_field(tags, fields, "Source", "SourceName", "source") or "")
             message = str(_field(tags, fields, "Message", "message") or "")
+            if not accept_security_event(event_id, message, fields):
+                continue
             if len(message) > 4000:
                 message = message[:3997] + "..."
             channel = str(_field(tags, fields, "Channel", "LogName", "channel") or "System")
@@ -767,6 +952,10 @@ class App:
             record_id = _as_int(_field(tags, fields, "EventRecordID", "RecordID", "record_id"))
             kw_raw = _field(tags, fields, "Keywords", "keywords") or ""
             category = classify_win_event(event_id, source, message)
+            if category in ("logon", "logoff", "lock", "unlock"):
+                parsed_user = logon_account(message, category)
+                if parsed_user:
+                    username = parsed_user
             severity = win_event_severity(
                 _field(tags, fields, "Level", "level"),
                 str(_field(tags, fields, "LevelText", "level_text") or ""),
@@ -816,6 +1005,10 @@ class App:
                     "message": message[:400],
                 },
             })
+            if category == "logoff":
+                await self.close_presence(host, event_ts, "logoff")
+            elif category == "logon" and username:
+                await self.note_logon(host, event_ts, username)
 
     async def ensure_host_map(self, host: str) -> None:
         existing = await self.fetchone(
@@ -837,6 +1030,250 @@ class App:
         )
         await self.add_event("host_seen", hostname=host, payload={"hostname": host})
 
+    def _compact_tel(self, host: str, ts: datetime, merged: dict) -> dict:
+        return {
+            "hostname": host,
+            "ts": iso(ts),
+            "cpu_pct": merged.get("cpu_pct"),
+            "mem_pct": merged.get("mem_pct"),
+            "mem_used_bytes": merged.get("mem_used_bytes"),
+            "mem_total_bytes": merged.get("mem_total_bytes"),
+            "gpu": merged.get("gpu") or [],
+            "disk": merged.get("disk") or [],
+            "processes": merged.get("processes") or [],
+            "uptime_sec": merged.get("uptime_sec"),
+            "windows_sessions": merged.get("windows_sessions") or [],
+            "idle_sec": merged.get("idle_sec"),
+            "active": merged.get("active"),
+            "foreground_app": merged.get("foreground_app") or "",
+            "input_mouse": merged.get("input_mouse"),
+            "input_clicks": merged.get("input_clicks"),
+            "input_keys": merged.get("input_keys"),
+            "input_pulses": merged.get("input_pulses"),
+        }
+
+    async def _save_latest(self, host: str, ts: datetime, merged: dict) -> None:
+        await self.exec(
+            """INSERT INTO telemetry_latest
+               (hostname, ts, cpu_pct, mem_pct, mem_used_bytes, mem_total_bytes,
+                disk_json, gpu_json, processes_json, uptime_sec, windows_sessions,
+                idle_sec, active, foreground_app, input_mouse, input_clicks,
+                input_keys, input_pulses)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+               ON CONFLICT (hostname) DO UPDATE SET
+                 ts = EXCLUDED.ts,
+                 cpu_pct = EXCLUDED.cpu_pct,
+                 mem_pct = EXCLUDED.mem_pct,
+                 mem_used_bytes = EXCLUDED.mem_used_bytes,
+                 mem_total_bytes = EXCLUDED.mem_total_bytes,
+                 disk_json = EXCLUDED.disk_json,
+                 gpu_json = EXCLUDED.gpu_json,
+                 processes_json = EXCLUDED.processes_json,
+                 uptime_sec = EXCLUDED.uptime_sec,
+                 windows_sessions = EXCLUDED.windows_sessions,
+                 idle_sec = EXCLUDED.idle_sec,
+                 active = EXCLUDED.active,
+                 foreground_app = EXCLUDED.foreground_app,
+                 input_mouse = EXCLUDED.input_mouse,
+                 input_clicks = EXCLUDED.input_clicks,
+                 input_keys = EXCLUDED.input_keys,
+                 input_pulses = EXCLUDED.input_pulses""",
+            (
+                host, ts, merged.get("cpu_pct"), merged.get("mem_pct"),
+                merged.get("mem_used_bytes"), merged.get("mem_total_bytes"),
+                Json(merged.get("disk") or []),
+                Json(merged.get("gpu") or []),
+                Json(merged.get("processes") or []),
+                merged.get("uptime_sec"),
+                Json(merged.get("windows_sessions") or []),
+                merged.get("idle_sec"),
+                merged.get("active"),
+                merged.get("foreground_app") or "",
+                merged.get("input_mouse"),
+                merged.get("input_clicks"),
+                merged.get("input_keys"),
+                merged.get("input_pulses"),
+            ),
+        )
+
+    async def _save_minute(self, host: str, ts: datetime, raw: dict, merged: dict) -> None:
+        bucket = ts.replace(second=0, microsecond=0)
+        gpus = raw.get("gpu") or []
+        gpu_pct = gpus[0].get("util_pct") if gpus and isinstance(gpus[0], dict) else None
+        active = raw.get("active")
+        active_pct = None if active is None else (100.0 if active else 0.0)
+        procs = Json(watched_brief(raw.get("processes"))) if raw.get("saw_procs") else None
+        await self.exec(
+            """INSERT INTO telemetry_minutes
+               (hostname, bucket, cpu_pct, mem_pct, gpu_pct, disk_free_pct, idle_sec,
+                active_pct, username, foreground_app, input_mouse, input_clicks,
+                input_keys, input_pulses, processes_json)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+               ON CONFLICT (hostname, bucket) DO UPDATE SET
+                 cpu_pct = COALESCE(EXCLUDED.cpu_pct, telemetry_minutes.cpu_pct),
+                 mem_pct = COALESCE(EXCLUDED.mem_pct, telemetry_minutes.mem_pct),
+                 gpu_pct = COALESCE(EXCLUDED.gpu_pct, telemetry_minutes.gpu_pct),
+                 disk_free_pct = COALESCE(EXCLUDED.disk_free_pct, telemetry_minutes.disk_free_pct),
+                 idle_sec = COALESCE(EXCLUDED.idle_sec, telemetry_minutes.idle_sec),
+                 active_pct = COALESCE(EXCLUDED.active_pct, telemetry_minutes.active_pct),
+                 username = CASE WHEN EXCLUDED.username <> '' THEN EXCLUDED.username
+                                 ELSE telemetry_minutes.username END,
+                 foreground_app = CASE WHEN EXCLUDED.foreground_app <> '' THEN EXCLUDED.foreground_app
+                                       ELSE telemetry_minutes.foreground_app END,
+                 input_mouse = CASE
+                   WHEN EXCLUDED.input_mouse IS NULL THEN telemetry_minutes.input_mouse
+                   WHEN telemetry_minutes.input_mouse IS NULL THEN EXCLUDED.input_mouse
+                   ELSE telemetry_minutes.input_mouse + EXCLUDED.input_mouse END,
+                 input_clicks = CASE
+                   WHEN EXCLUDED.input_clicks IS NULL THEN telemetry_minutes.input_clicks
+                   WHEN telemetry_minutes.input_clicks IS NULL THEN EXCLUDED.input_clicks
+                   ELSE telemetry_minutes.input_clicks + EXCLUDED.input_clicks END,
+                 input_keys = CASE
+                   WHEN EXCLUDED.input_keys IS NULL THEN telemetry_minutes.input_keys
+                   WHEN telemetry_minutes.input_keys IS NULL THEN EXCLUDED.input_keys
+                   ELSE telemetry_minutes.input_keys + EXCLUDED.input_keys END,
+                 input_pulses = CASE
+                   WHEN EXCLUDED.input_pulses IS NULL THEN telemetry_minutes.input_pulses
+                   WHEN telemetry_minutes.input_pulses IS NULL THEN EXCLUDED.input_pulses
+                   ELSE telemetry_minutes.input_pulses + EXCLUDED.input_pulses END,
+                 processes_json = COALESCE(EXCLUDED.processes_json, telemetry_minutes.processes_json)""",
+            (
+                host, bucket, raw.get("cpu_pct"), raw.get("mem_pct"), gpu_pct,
+                disk_free_pct(raw.get("disk")), raw.get("idle_sec"), active_pct,
+                primary_user(merged.get("windows_sessions")),
+                merged.get("foreground_app") or "",
+                raw.get("input_mouse"), raw.get("input_clicks"),
+                raw.get("input_keys"), raw.get("input_pulses"), procs,
+            ),
+        )
+
+    async def _jump_email(self, host: str) -> str:
+        row = await self.fetchone(
+            """SELECT s.user_email
+               FROM sessions s
+               LEFT JOIN device_maps m ON m.jump_device_id = s.device_id
+               WHERE s.end_time IS NULL
+                 AND (
+                   lower(s.hostname) = lower(%s)
+                   OR lower(m.telegraf_hostname) = lower(%s)
+                   OR lower(split_part(s.hostname, '.', 1)) = lower(%s)
+                 )
+               ORDER BY s.start_time DESC LIMIT 1""",
+            (host, host, host_key(host)),
+        )
+        return str((row or {}).get("user_email") or "")
+
+    async def _end_work(self, interval_id: int, ts: datetime, reason: str) -> None:
+        await self.exec(
+            """UPDATE work_intervals
+               SET end_time = %s, end_reason = %s
+               WHERE id = %s AND end_time IS NULL""",
+            (ts, reason, interval_id),
+        )
+
+    async def touch_work_interval(self, host: str, ts: datetime, merged: dict) -> None:
+        email = await self._jump_email(host)
+        user = "" if merged.get("user_cleared") else primary_user(merged.get("windows_sessions"))
+        kind = session_kind_for(merged.get("windows_sessions"), email)
+        fg = merged.get("foreground_app") or ""
+        active = merged.get("active") is True
+        watched = any(isinstance(p, dict) and p.get("watch") for p in (merged.get("processes") or []))
+        row = await self.fetchone(
+            """SELECT * FROM work_intervals
+               WHERE lower(hostname) = lower(%s) AND end_time IS NULL
+               ORDER BY start_time DESC LIMIT 1""",
+            (host,),
+        )
+        if row:
+            last = row.get("last_seen")
+            if isinstance(last, datetime) and last.tzinfo is None:
+                last = last.replace(tzinfo=timezone.utc)
+            gap = (ts - last).total_seconds() if isinstance(last, datetime) else 0
+            if gap > WORK_GAP_SEC:
+                await self._end_work(row["id"], last or ts, "telemetry_gap")
+                row = None
+            elif user and (row.get("username") or "") and user.lower() != str(row.get("username")).lower():
+                await self._end_work(row["id"], ts, "user_change")
+                row = None
+        if row is None:
+            if not user and not active and not fg and not watched:
+                return
+            await self.exec(
+                """INSERT INTO work_intervals
+                   (hostname, username, session_kind, start_time, last_seen,
+                    active_sec, foreground_app, jump_user_email)
+                   VALUES (%s, %s, %s, %s, %s, 0, %s, %s)""",
+                (host, user, kind, ts, ts, fg, email),
+            )
+            return
+        last = row.get("last_seen")
+        if isinstance(last, datetime) and last.tzinfo is None:
+            last = last.replace(tzinfo=timezone.utc)
+        delta = 0
+        if isinstance(last, datetime):
+            delta = max(0, min(180, int((ts - last).total_seconds())))
+        if email:
+            kind = "jump"
+        elif kind == "rdp":
+            kind = "rdp"
+        else:
+            kind = row.get("session_kind") or "local"
+        await self.exec(
+            """UPDATE work_intervals
+               SET last_seen = %s,
+                   active_sec = active_sec + %s,
+                   username = %s,
+                   foreground_app = %s,
+                   jump_user_email = CASE WHEN %s <> '' THEN %s ELSE jump_user_email END,
+                   session_kind = %s
+               WHERE id = %s AND end_time IS NULL""",
+            (
+                ts, delta if active else 0,
+                user or row.get("username") or "",
+                fg or row.get("foreground_app") or "",
+                email, email, kind, row["id"],
+            ),
+        )
+
+    async def note_logon(self, host: str, ts: datetime, username: str) -> None:
+        hk = host_key(host)
+        prev = dict(self._tel_latest.get(hk) or {})
+        prev["windows_sessions"] = [{
+            "username": username,
+            "session_name": "console",
+            "state": "Active",
+        }]
+        prev["user_cleared"] = False
+        prev["hostname"] = prev.get("hostname") or host
+        self._tel_latest[hk] = prev
+        merged = merge_telemetry(prev, {"windows_sessions": prev["windows_sessions"]})
+        merged["user_cleared"] = False
+        self._tel_latest[hk] = dict(self._compact_tel(host, ts, merged))
+        self._tel_latest[hk]["user_cleared"] = False
+        await self._save_latest(host, ts, merged)
+        await self.touch_work_interval(host, ts, merged)
+        await self.publish_host(host)
+
+    async def close_presence(self, host: str, ts: datetime, reason: str) -> None:
+        rows = await self.fetchall(
+            """SELECT id FROM work_intervals
+               WHERE lower(hostname) = lower(%s) AND end_time IS NULL""",
+            (host,),
+        )
+        for row in rows:
+            await self._end_work(row["id"], ts, reason)
+        hk = host_key(host)
+        if hk not in self._tel_latest:
+            return
+        tel = dict(self._tel_latest[hk])
+        tel["windows_sessions"] = []
+        tel["user_cleared"] = True
+        tel["active"] = False
+        self._tel_latest[hk] = tel
+        merged = dict(tel)
+        await self._save_latest(host, ts, merged)
+        await self.publish_host(host)
+
     def _tel_changed(self, a: dict, b: dict) -> bool:
         for k in ("cpu_pct", "mem_pct"):
             av, bv = a.get(k), b.get(k)
@@ -856,6 +1293,13 @@ class App:
             return True
         if json.dumps(a.get("gpu"), sort_keys=True) != json.dumps(b.get("gpu"), sort_keys=True):
             return True
+        if json.dumps(a.get("disk"), sort_keys=True) != json.dumps(b.get("disk"), sort_keys=True):
+            return True
+        if (a.get("foreground_app") or "") != (b.get("foreground_app") or ""):
+            return True
+        for key in ("input_mouse", "input_clicks", "input_keys", "input_pulses"):
+            if (a.get(key) or 0) != (b.get(key) or 0):
+                return True
         return json.dumps(a.get("processes"), sort_keys=True) != json.dumps(b.get("processes"), sort_keys=True)
 
     def _fold_metrics(self, host: str, items: list[dict]) -> dict:
@@ -866,10 +1310,16 @@ class App:
         uptime = None
         idle_sec = None
         active = None
+        foreground = ""
+        input_mouse = None
+        input_clicks = None
+        input_keys = None
+        input_pulses = None
         disks = []
         gpus = []
         procs = []
         sessions = []
+        saw_procs = False
         watches = enabled_watchlist(self.cfg)
         idle_names = ("nre_idle", "user_idle", "idle")
         for m in items:
@@ -920,11 +1370,26 @@ class App:
                             active = float(raw_a) != 0
                         except (TypeError, ValueError):
                             active = str(raw_a).lower() in ("1", "true", "yes")
+                fg = str(fields.get("foreground") or tags.get("foreground") or "").replace("\x00", "").strip()
+                if fg and fg.lower() not in ("idle", "unknown"):
+                    foreground = fg[:80]
+                if "mouse" in fields:
+                    input_mouse = _as_int(fields.get("mouse"))
+                if "clicks" in fields:
+                    input_clicks = _as_int(fields.get("clicks"))
+                if "keys" in fields:
+                    input_keys = _as_int(fields.get("keys"))
+                if "pulses" in fields:
+                    input_pulses = _as_int(fields.get("pulses"))
             elif name.startswith("procstat"):
+                saw_procs = True
+                cpu_v = _as_float(fields.get("cpu_usage") or fields.get("cpu_time"))
+                if cpu_v is not None and cpu_v > 10000:
+                    cpu_v = None
                 procs.append({
                     "name": tags.get("exe") or tags.get("process_name") or tags.get("process_name")
                             or fields.get("process_name") or "?",
-                    "cpu": _as_float(fields.get("cpu_usage") or fields.get("cpu_time")),
+                    "cpu": cpu_v,
                     "rss": _as_int(fields.get("memory_rss") or fields.get("memory_rss_bytes")),
                     "pid": tags.get("pid") or fields.get("pid"),
                     "user": tags.get("user") or fields.get("user") or fields.get("username") or "",
@@ -955,6 +1420,12 @@ class App:
             "windows_sessions": list(uniq.values()),
             "idle_sec": idle_sec,
             "active": active,
+            "foreground_app": foreground,
+            "input_mouse": input_mouse,
+            "input_clicks": input_clicks,
+            "input_keys": input_keys,
+            "input_pulses": input_pulses,
+            "saw_procs": saw_procs,
         }
 
     def _parse_windows_session(self, name: str, fields: dict, tags: dict) -> Optional[dict]:
@@ -1423,6 +1894,18 @@ class App:
                 await self.exec("DELETE FROM turn_throughput WHERE ts < now() - (%s || ' days')::interval", (str(days),))
                 await self.exec("DELETE FROM events WHERE ts < now() - (%s || ' days')::interval", (str(days),))
                 await self.exec("DELETE FROM host_events WHERE ts < now() - (%s || ' days')::interval", (str(days),))
+                await self.exec("DELETE FROM telemetry_minutes WHERE bucket < now() - (%s || ' days')::interval", (str(days),))
+                await self.exec(
+                    """DELETE FROM work_intervals
+                       WHERE COALESCE(end_time, last_seen) < now() - (%s || ' days')::interval""",
+                    (str(days),),
+                )
+                await self.exec(
+                    """UPDATE work_intervals
+                       SET end_time = last_seen, end_reason = 'telemetry_gap'
+                       WHERE end_time IS NULL
+                         AND last_seen < now() - interval '20 minutes'"""
+                )
                 await self.exec(
                     """DELETE FROM sessions
                        WHERE COALESCE(end_time, start_time) < now() - (%s || ' days')::interval""",

@@ -49,8 +49,8 @@ $nre_active = 'telegraf';
   </section>
 
   <section class="admin-section">
-    <h2>4. Idle helper (mouse / keyboard)</h2>
-    <p class="hint">Windows only reports last input from the <strong>logged-on user’s session</strong>. Telegraf running as a service cannot see it. This helper writes <code>idle_sec</code> every 15 seconds; Live marks the bay <strong>active</strong> when idle is under <span id="idleThreshold">120</span> seconds (Settings).</p>
+    <h2>4. Idle helper (mouse / keyboard / focused app)</h2>
+    <p class="hint">Windows only reports last input and the foreground process from the <strong>logged-on user’s session</strong>. Telegraf running as a service cannot see them. This helper writes idle time, the focused process name, and input counts (moves, clicks, keys — never keystroke content) every 15 seconds. Live marks the bay <strong>active</strong> when idle is under <span id="idleThreshold">120</span> seconds (Settings). The same helper is what History uses for on-prem editors that are not in Jump.</p>
     <ol class="install-steps">
       <li>Download <a id="idleScriptLink" href="assets/nre-idle.ps1" download>nre-idle.ps1</a> and save it to <code>C:\ProgramData\nre\nre-idle.ps1</code>.</li>
       <li>In an elevated PowerShell <strong>on the bay, while logged on as the editor</strong>, register a logon task (it must run in that user’s session, not as the Telegraf service):</li>
@@ -64,7 +64,7 @@ $nre_active = 'telegraf';
 
   <section class="admin-section">
     <h2>5. Windows crash / reboot / update events</h2>
-    <p class="hint">The copied config includes <code>inputs.win_eventlog</code> for Event IDs 13, 41, 1074, 6006, 6008, 1001 (System/Application) and 19 / 20 / 43 (Windows Update). Register the service with <code>telegraf.exe --service install</code> so it runs as <strong>Local System</strong> and can read the System log. Events show on <a href="windows.php">Windows</a> and are kept for 90 days. This is log metadata (who rebooted, bugcheck code) — not <code>MEMORY.DMP</code> files. Collection starts from install time (<code>from_beginning = false</code>).</p>
+    <p class="hint">The copied config includes <code>inputs.win_eventlog</code> for crashes, reboots, shutdowns, Windows Update, and interactive logon / logoff / lock / unlock (Security log). Register the service with <code>telegraf.exe --service install</code> so it runs as <strong>Local System</strong> and can read those logs. Events show on <a href="windows.php">Windows</a> and are kept for 90 days. Logon rows are interactive sessions only (console, unlock, RDP), not service accounts. This is log metadata — not crash dumps. Collection starts from install time (<code>from_beginning = false</code>).</p>
   </section>
 
   <section class="admin-section">

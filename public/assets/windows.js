@@ -14,6 +14,10 @@ const CAT_LABEL = {
   reboot: 'Reboot',
   shutdown: 'Shutdown',
   update: 'Update',
+  logon: 'Logon',
+  logoff: 'Logoff',
+  lock: 'Lock',
+  unlock: 'Unlock',
   other: 'Other',
 };
 

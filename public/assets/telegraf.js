@@ -64,6 +64,10 @@ function telegrafConf(ingestUrl, idleSec, token) {
     <Query Id="2" Path="Microsoft-Windows-WindowsUpdateClient/Operational">
       <Select Path="Microsoft-Windows-WindowsUpdateClient/Operational">*[System[(EventID=19 or EventID=20 or EventID=43)]]</Select>
     </Query>
+    <Query Id="3" Path="Security">
+      <Select Path="Security">*[System[(EventID=4634 or EventID=4647 or EventID=4800 or EventID=4801)]]</Select>
+      <Select Path="Security">*[System[(EventID=4624)]] and *[EventData[Data[@Name='LogonType']='2' or Data[@Name='LogonType']='7' or Data[@Name='LogonType']='10' or Data[@Name='LogonType']='11']]</Select>
+    </Query>
   </QueryList>
   '''
 `;

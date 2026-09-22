@@ -16,6 +16,30 @@ function fmtDur(sec) {
   const m = Math.floor((sec % 3600) / 60);
   return h ? `${h}h ${m}m` : `${m}m`;
 }
+function fmtBytes(n) {
+  n = Number(n);
+  if (!n) return '—';
+  const u = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return n.toFixed(i > 1 ? 1 : 0) + ' ' + u[i];
+}
+function holdPoints(rows, key) {
+  let last = null;
+  const out = [];
+  (rows || []).forEach(r => {
+    if (r[key] != null && r[key] !== '') last = Number(r[key]);
+    if (last == null || Number.isNaN(last)) return;
+    out.push({ t: r.ts, y: last });
+  });
+  return out;
+}
+function zeroPoints(rows, key) {
+  return (rows || []).map(r => ({
+    t: r.ts,
+    y: r[key] == null || r[key] === '' ? 0 : Number(r[key]),
+  }));
+}
 
 async function loadHosts() {
   const r = await fetch('api/history.php?kind=hosts');
@@ -33,6 +57,20 @@ async function loadHistory() {
   const from = document.getElementById('histFrom').value;
   const to = document.getElementById('histTo').value;
   const qs = new URLSearchParams({ from, to, host });
+  const work = await (await fetch('api/history.php?kind=work&' + qs)).json();
+  const wb = document.querySelector('#workTable tbody');
+  const kindLabel = { local: 'Console', rdp: 'RDP', jump: 'Jump' };
+  wb.innerHTML = (work.intervals || []).map(w => `<tr>
+    <td>${esc(fmtWhen(w.start_time))}</td>
+    <td>${w.end_time ? esc(fmtWhen(w.end_time)) : 'Open'}</td>
+    <td>${esc(w.display_name || w.hostname)}</td>
+    <td>${esc(w.username || '—')}</td>
+    <td>${esc(kindLabel[w.session_kind] || w.session_kind || 'Console')}</td>
+    <td>${esc(fmtDur(w.active_sec))}</td>
+    <td>${esc(w.foreground_app || '—')}</td>
+    <td>${esc(w.jump_user_email || '—')}</td>
+  </tr>`).join('') || '<tr><td colspan="8">No workstation time in range</td></tr>';
+
   const sess = await (await fetch('api/history.php?kind=sessions&' + qs)).json();
   const tb = document.querySelector('#sessTable tbody');
   tb.innerHTML = (sess.sessions || []).map(s => `<tr>
@@ -42,15 +80,32 @@ async function loadHistory() {
     <td>${esc(fmtDur(s.duration_sec))}</td>
     <td>${esc(s.transport)}</td>
     <td>${esc(s.client_ip)}</td>
-  </tr>`).join('') || '<tr><td colspan="6">No sessions in range</td></tr>';
+  </tr>`).join('') || '<tr><td colspan="6">No Jump sessions in range</td></tr>';
 
+  const dwellBody = document.querySelector('#dwellTable tbody');
+  const appBody = document.querySelector('#appTable tbody');
   if (host) {
     const tel = await (await fetch('api/history.php?kind=telemetry&' + qs)).json();
     const pts = tel.points || [];
-    nreChart(document.getElementById('chartCpu'), [{ points: nreToPoints(pts, 'cpu_pct') }], { max: 100 });
-    nreChart(document.getElementById('chartMem'), [{ points: nreToPoints(pts, 'mem_pct') }], { max: 100 });
-    nreChart(document.getElementById('chartGpu'), [{ points: nreToPoints(pts, 'gpu_pct') }], { max: 100 });
-    nreChart(document.getElementById('chartIdle'), [{ points: nreToPoints(pts, 'idle_sec') }]);
+    nreChart(document.getElementById('chartCpu'), [{ points: holdPoints(pts, 'cpu_pct') }], { max: 100 });
+    nreChart(document.getElementById('chartMem'), [{ points: holdPoints(pts, 'mem_pct') }], { max: 100 });
+    nreChart(document.getElementById('chartDisk'), [{ points: holdPoints(pts, 'disk_free_pct') }], { max: 100 });
+    nreChart(document.getElementById('chartGpu'), [{ points: holdPoints(pts, 'gpu_pct') }], { max: 100 });
+    nreChart(document.getElementById('chartIdle'), [{ points: holdPoints(pts, 'idle_sec') }]);
+    nreChart(document.getElementById('chartActive'), [{ points: holdPoints(pts, 'active_pct') }], { max: 100 });
+    nreChart(document.getElementById('chartInput'), [{ points: zeroPoints(pts, 'input_n') }]);
+    dwellBody.innerHTML = (tel.dwell || []).map(d => `<tr>
+      <td>${esc(d.foreground_app)}</td>
+      <td>${esc(d.minutes)}</td>
+    </tr>`).join('') || '<tr><td colspan="2">No focused-app samples in range</td></tr>';
+    appBody.innerHTML = (tel.apps || []).map(a => `<tr>
+      <td>${esc(a.name)}</td>
+      <td>${a.cpu == null ? '—' : Number(a.cpu).toFixed(1) + '%'}</td>
+      <td>${esc(fmtBytes(a.rss))}</td>
+    </tr>`).join('') || '<tr><td colspan="3">No pinned apps in range</td></tr>';
+  } else {
+    dwellBody.innerHTML = '<tr><td colspan="2">Pick a host</td></tr>';
+    appBody.innerHTML = '<tr><td colspan="3">Pick a host</td></tr>';
   }
 
   const turn = await (await fetch('api/history.php?kind=turn&' + qs)).json();

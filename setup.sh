@@ -358,6 +358,42 @@ install_apache() {
   fi
 }
 
+install_apache_bridge_privs() {
+  step "Apache privileges (Bridge sudo)"
+  local dropdir dropdest dropsrc phpdir wrote_php=0
+  if ! systemctl cat apache2.service >/dev/null 2>&1; then
+    warn "apache2.service not installed - skip RestrictSUIDSGID drop-in"
+    return 0
+  fi
+
+  dropsrc="${PREFIX}/deploy/apache2-nre-sudo.conf"
+  [[ -f "${dropsrc}" ]] || dropsrc="${ROOT}/deploy/apache2-nre-sudo.conf"
+  [[ -f "${dropsrc}" ]] || fail "missing deploy/apache2-nre-sudo.conf"
+
+  dropdir=/etc/systemd/system/apache2.service.d
+  dropdest="${dropdir}/nre-sudo.conf"
+  mkdir -p "${dropdir}"
+  cp "${dropsrc}" "${dropdest}"
+  chmod 644 "${dropdest}"
+  systemctl daemon-reload
+  ok "installed ${dropdest} (RestrictSUIDSGID=no)"
+
+  for phpdir in /etc/php/*/apache2/conf.d; do
+    [[ -d "${phpdir}" ]] || continue
+    printf '%s\n' 'pcre.jit=0' > "${phpdir}/99-nre-pcre.ini"
+    chmod 644 "${phpdir}/99-nre-pcre.ini"
+    wrote_php=1
+  done
+  if [[ "${wrote_php}" -eq 1 ]]; then
+    ok "pcre.jit=0 (avoids JIT mmap under MemoryDenyWriteExecute)"
+  fi
+
+  if systemctl is-active --quiet apache2; then
+    systemctl restart apache2
+    ok "apache2 restarted so RestrictSUIDSGID applies"
+  fi
+}
+
 install_sudoers() {
   step "Sudoers (Bridge page)"
   local src dest
@@ -520,6 +556,20 @@ cmd_check() {
   else
     soft_fail "sudoers.d/nre-bridge missing"
   fi
+  if [[ -f /etc/systemd/system/apache2.service.d/nre-sudo.conf ]]; then
+    ok "apache2 drop-in nre-sudo.conf"
+  else
+    soft_fail "apache2 drop-in nre-sudo.conf missing (PHP cannot sudo under RestrictSUIDSGID)"
+  fi
+  if systemctl cat apache2.service >/dev/null 2>&1; then
+    local rsgid
+    rsgid="$(systemctl show apache2 -p RestrictSUIDSGID --value 2>/dev/null || true)"
+    if [[ "${rsgid}" == "no" ]]; then
+      ok "apache2 RestrictSUIDSGID=no"
+    else
+      soft_fail "apache2 RestrictSUIDSGID=${rsgid:-unknown} (PHP sudo blocked; sudo $0 update)"
+    fi
+  fi
 
   local login_code
   login_code="$(http_code "http://127.0.0.1/login.php")"
@@ -644,6 +694,7 @@ cmd_install() {
   apply_schema
   install_unit
   install_apache
+  install_apache_bridge_privs
   install_sudoers
   install_firewall
   start_bridge
@@ -667,6 +718,7 @@ cmd_update() {
   if [[ -d /etc/apache2/sites-available ]]; then
     install_apache
   fi
+  install_apache_bridge_privs
   install_sudoers
   start_bridge
   cmd_check || true

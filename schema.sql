@@ -92,6 +92,73 @@ ALTER TABLE telemetry_samples ADD COLUMN IF NOT EXISTS uptime_sec BIGINT;
 ALTER TABLE telemetry_samples ADD COLUMN IF NOT EXISTS windows_sessions JSONB;
 ALTER TABLE telemetry_samples ADD COLUMN IF NOT EXISTS idle_sec INTEGER;
 ALTER TABLE telemetry_samples ADD COLUMN IF NOT EXISTS active BOOLEAN;
+ALTER TABLE telemetry_samples ADD COLUMN IF NOT EXISTS foreground_app TEXT;
+ALTER TABLE telemetry_samples ADD COLUMN IF NOT EXISTS input_mouse INTEGER;
+ALTER TABLE telemetry_samples ADD COLUMN IF NOT EXISTS input_clicks INTEGER;
+ALTER TABLE telemetry_samples ADD COLUMN IF NOT EXISTS input_keys INTEGER;
+ALTER TABLE telemetry_samples ADD COLUMN IF NOT EXISTS input_pulses INTEGER;
+
+-- Last non-empty reading per host. Live reads this so a partial Telegraf
+-- post (idle only, or processes only) cannot blank CPU, memory, disk, or user.
+CREATE TABLE IF NOT EXISTS telemetry_latest (
+    hostname TEXT PRIMARY KEY,
+    ts TIMESTAMPTZ NOT NULL,
+    cpu_pct REAL,
+    mem_pct REAL,
+    mem_used_bytes BIGINT,
+    mem_total_bytes BIGINT,
+    disk_json JSONB,
+    gpu_json JSONB,
+    processes_json JSONB,
+    uptime_sec BIGINT,
+    windows_sessions JSONB,
+    idle_sec INTEGER,
+    active BOOLEAN,
+    foreground_app TEXT NOT NULL DEFAULT '',
+    input_mouse INTEGER,
+    input_clicks INTEGER,
+    input_keys INTEGER,
+    input_pulses INTEGER
+);
+
+-- One row per host per minute. Gauges keep the last real sample in the minute.
+-- Input counts sum. Used by History so charts survive sparse posts.
+CREATE TABLE IF NOT EXISTS telemetry_minutes (
+    hostname TEXT NOT NULL,
+    bucket TIMESTAMPTZ NOT NULL,
+    cpu_pct REAL,
+    mem_pct REAL,
+    gpu_pct REAL,
+    disk_free_pct REAL,
+    idle_sec INTEGER,
+    active_pct REAL,
+    username TEXT NOT NULL DEFAULT '',
+    foreground_app TEXT NOT NULL DEFAULT '',
+    input_mouse INTEGER,
+    input_clicks INTEGER,
+    input_keys INTEGER,
+    input_pulses INTEGER,
+    processes_json JSONB,
+    PRIMARY KEY (hostname, bucket)
+);
+
+-- Who was at the workstation. Independent of Jump.
+CREATE TABLE IF NOT EXISTS work_intervals (
+    id BIGSERIAL PRIMARY KEY,
+    hostname TEXT NOT NULL,
+    username TEXT NOT NULL DEFAULT '',
+    session_kind TEXT NOT NULL DEFAULT 'local'
+        CHECK (session_kind IN ('local', 'rdp', 'jump')),
+    start_time TIMESTAMPTZ NOT NULL,
+    end_time TIMESTAMPTZ,
+    last_seen TIMESTAMPTZ NOT NULL,
+    active_sec INTEGER NOT NULL DEFAULT 0,
+    foreground_app TEXT NOT NULL DEFAULT '',
+    jump_user_email TEXT NOT NULL DEFAULT '',
+    end_reason TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_work_host_time ON work_intervals (hostname, start_time DESC);
+CREATE INDEX IF NOT EXISTS idx_work_open ON work_intervals (hostname) WHERE end_time IS NULL;
 
 CREATE TABLE IF NOT EXISTS turn_allocations (
     id BIGSERIAL PRIMARY KEY,
@@ -139,7 +206,10 @@ CREATE TABLE IF NOT EXISTS host_events (
     hostname TEXT NOT NULL,
     ts TIMESTAMPTZ NOT NULL,
     category TEXT NOT NULL DEFAULT 'other'
-        CHECK (category IN ('crash', 'unexpected', 'reboot', 'shutdown', 'update', 'other')),
+        CHECK (category IN (
+            'crash', 'unexpected', 'reboot', 'shutdown', 'update',
+            'logon', 'logoff', 'lock', 'unlock', 'other'
+        )),
     severity TEXT NOT NULL DEFAULT 'info'
         CHECK (severity IN ('critical', 'error', 'warning', 'info', 'verbose')),
     event_id INTEGER,
@@ -159,6 +229,36 @@ CREATE INDEX IF NOT EXISTS idx_host_events_q ON host_events (ts DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_host_events_dedupe
     ON host_events (hostname, channel, record_id)
     WHERE record_id IS NOT NULL;
+
+-- Presence categories added after the original check constraint shipped.
+DO $$
+DECLARE r record;
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM pg_constraint con
+    JOIN pg_class rel ON rel.oid = con.conrelid
+    WHERE rel.relname = 'host_events' AND con.contype = 'c'
+      AND pg_get_constraintdef(con.oid) ILIKE '%category%'
+      AND pg_get_constraintdef(con.oid) ILIKE '%logon%'
+  ) THEN
+    RETURN;
+  END IF;
+  FOR r IN
+    SELECT con.conname
+    FROM pg_constraint con
+    JOIN pg_class rel ON rel.oid = con.conrelid
+    WHERE rel.relname = 'host_events' AND con.contype = 'c'
+      AND pg_get_constraintdef(con.oid) ILIKE '%category%'
+  LOOP
+    EXECUTE format('ALTER TABLE host_events DROP CONSTRAINT %I', r.conname);
+  END LOOP;
+  ALTER TABLE host_events ADD CONSTRAINT host_events_category_check
+    CHECK (category IN (
+      'crash', 'unexpected', 'reboot', 'shutdown', 'update',
+      'logon', 'logoff', 'lock', 'unlock', 'other'
+    ));
+END $$;
 
 CREATE TABLE IF NOT EXISTS schema_migrations (
     id TEXT PRIMARY KEY,
